@@ -8,6 +8,9 @@ const base = process.env.VITE_BASE_PATH ?? "/vision/";
 export default defineConfig({
   base,
   plugins: [react()],
+  build: {
+    chunkSizeWarningLimit: 3000,
+  },
   optimizeDeps: {
     exclude: ["onnxruntime-web"],
   },
@@ -21,5 +24,4 @@ export default defineConfig({
       },
     },
   },
-  assetsInclude: ["**/*.onnx", "**/*.wasm"],
 });
