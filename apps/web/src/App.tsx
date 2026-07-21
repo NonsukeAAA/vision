@@ -421,34 +421,37 @@ export default function App() {
                 type="button"
                 className="workbench-thumb"
                 onClick={() => inputRef.current?.click()}
-                title="別の画像を選ぶ"
+                title="画像を変更"
+                aria-label="画像を変更"
               >
-                <img src={previewUrl} alt="選択中の画像" />
+                <img src={previewUrl} alt="" />
               </button>
               <div className="workbench-meta">
-                <p className="workbench-title">解析済み</p>
-                <p className="muted">
-                  {settings.mode}
+                <p className="workbench-title">{settings.mode}</p>
+                <p className="muted workbench-sub">
+                  {tagCount} tags
                   {result?.device ? ` · ${result.device}` : ""}
-                  {result?.source.wd ? ` · ${result.source.wd}` : ""}
                 </p>
-                <div className="row">
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    disabled={!canAnalyze}
-                    onClick={() => void runTag()}
-                  >
-                    再解析
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => inputRef.current?.click()}
-                  >
-                    画像を変更
-                  </button>
-                </div>
+              </div>
+              <div className="workbench-actions">
+                <button
+                  type="button"
+                  className="btn-text"
+                  disabled={!canAnalyze}
+                  onClick={() => void runTag()}
+                >
+                  再解析
+                </button>
+                <button
+                  type="button"
+                  className="btn-text"
+                  onClick={() => {
+                    setScreen("home");
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                >
+                  戻る
+                </button>
               </div>
               <input
                 ref={inputRef}
@@ -480,9 +483,7 @@ export default function App() {
                 ) : (
                   <>
                     <strong>画像をドロップ</strong>
-                    <span className="muted">
-                      またはクリック · PNG / JPEG / WebP
-                    </span>
+                    <span className="muted">クリックでも選択可</span>
                   </>
                 )}
                 <input
@@ -494,31 +495,35 @@ export default function App() {
                 />
               </div>
 
-              <div className="row analyze-row">
+              <div className="cta-block">
                 <button
                   type="button"
-                  className="btn btn-primary"
+                  className="btn btn-primary btn-block"
                   disabled={!canAnalyze}
                   onClick={() => void runTag()}
                 >
                   {screen === "working" ? "解析中…" : "解析する"}
                 </button>
-                {file && (
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={() => pickFile(null)}
-                  >
-                    クリア
-                  </button>
-                )}
-                <span className="muted shortcut-hint">⌘/Ctrl + Enter</span>
+                <div className="cta-meta">
+                  {file ? (
+                    <button
+                      type="button"
+                      className="btn-text"
+                      onClick={() => pickFile(null)}
+                    >
+                      クリア
+                    </button>
+                  ) : (
+                    <span />
+                  )}
+                  <span className="shortcut-hint">⌘/Ctrl + Enter</span>
+                </div>
               </div>
             </>
           )}
 
           {screen === "working" && (
-            <div className="status-line panel" role="status" aria-live="polite">
+            <div className="status-line" role="status" aria-live="polite">
               <M3eLoadingIndicator />
               <span>
                 {loadProgress?.message ||
@@ -532,7 +537,7 @@ export default function App() {
             screen !== "working" &&
             loadProgress.phase !== "ready" &&
             loadProgress.phase !== "idle" && (
-              <div className="panel muted">
+              <div className="status-line muted">
                 {loadProgress.message}
                 {loadProgress.total > 0 && loadProgress.phase === "model" && (
                   <>
@@ -557,67 +562,57 @@ export default function App() {
           )}
 
           {showingResult && result && (
-            <section className="result panel stack" ref={resultRef}>
-              <div className="result-head">
-                <div>
-                  <h2 className="section-title">プロンプト</h2>
-                  <p className="muted result-sub">
-                    {tagCount > 0 ? `${tagCount} tags` : "編集してコピー"}
-                    {result.source.joy ? ` · joy` : ""}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  className={`btn btn-primary btn-copy-head ${copied ? "is-copied" : ""}`}
-                  onClick={() => void copyPrompt()}
-                  disabled={!prompt.trim()}
-                >
-                  {copied ? "コピー済み" : "コピー"}
-                </button>
-              </div>
-
+            <section className="result" ref={resultRef}>
               {result.source.note && (
                 <p className="muted result-note">{result.source.note}</p>
               )}
 
-              <div className="prompt-shell">
-                <textarea
-                  ref={promptRef}
-                  className="prompt-box"
-                  value={prompt}
-                  onChange={(e) => {
-                    setPrompt(e.target.value);
-                    setCopied(false);
-                  }}
-                  aria-label="生成プロンプト"
-                  rows={5}
-                />
-                <button
-                  type="button"
-                  className={`btn-icon-copy ${copied ? "is-copied" : ""}`}
-                  onClick={() => void copyPrompt()}
-                  disabled={!prompt.trim()}
-                  aria-label={copied ? "コピー済み" : "プロンプトをコピー"}
-                  title="コピー (⌘⇧C)"
-                >
-                  {copied ? "済" : "Copy"}
-                </button>
+              <div className="prompt-block">
+                <div className="prompt-label-row">
+                  <label className="prompt-label" htmlFor="prompt-field">
+                    プロンプト
+                  </label>
+                  <span className="muted result-sub">
+                    {tagCount > 0 ? `${tagCount} tags` : "編集可"}
+                  </span>
+                </div>
+                <div className="prompt-shell">
+                  <textarea
+                    id="prompt-field"
+                    ref={promptRef}
+                    className="prompt-box"
+                    value={prompt}
+                    onChange={(e) => {
+                      setPrompt(e.target.value);
+                      setCopied(false);
+                    }}
+                    aria-label="生成プロンプト"
+                    rows={6}
+                  />
+                  <button
+                    type="button"
+                    className={`btn-icon-copy ${copied ? "is-copied" : ""}`}
+                    onClick={() => void copyPrompt()}
+                    disabled={!prompt.trim()}
+                    aria-label={copied ? "コピー済み" : "プロンプトをコピー"}
+                    title="コピー (⌘⇧C)"
+                  >
+                    {copied ? "済" : "Copy"}
+                  </button>
+                </div>
               </div>
 
               {editableTags.length > 0 && (
                 <div className="tags-block">
                   <div className="tags-head">
-                    <h3 className="tags-title">タグ</h3>
-                    <div className="row">
-                      <span className="muted">タップで除外</span>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        onClick={syncPromptFromTags}
-                      >
-                        タグから再生成
-                      </button>
-                    </div>
+                    <h3 className="tags-title">タグ · タップで除外</h3>
+                    <button
+                      type="button"
+                      className="btn-text"
+                      onClick={syncPromptFromTags}
+                    >
+                      タグから再生成
+                    </button>
                   </div>
                   <div className="chip-wrap">
                     {editableTags.map((t) => (
@@ -644,32 +639,14 @@ export default function App() {
         </div>
 
         {showingResult && (
-          <div className="action-dock" role="region" aria-label="結果操作">
+          <div className="action-dock" role="region" aria-label="コピー">
             <button
               type="button"
-              className={`btn btn-primary btn-dock-copy ${copied ? "is-copied" : ""}`}
+              className={`btn btn-primary btn-block btn-dock-copy ${copied ? "is-copied" : ""}`}
               onClick={() => void copyPrompt()}
               disabled={!prompt.trim()}
             >
-              {copied ? "コピーしました" : "プロンプトをコピー"}
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              disabled={!canAnalyze}
-              onClick={() => void runTag()}
-            >
-              再解析
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => {
-                setScreen("home");
-                window.scrollTo({ top: 0, behavior: "smooth" });
-              }}
-            >
-              戻る
+              {copied ? "コピーしました" : "コピー"}
             </button>
           </div>
         )}
