@@ -1,5 +1,6 @@
 import * as ort from "onnxruntime-web/wasm";
 import type { TagScore } from "./types";
+import { forceUncensoredTags } from "./forceUncensored";
 
 /** Browser-friendly WD v3 (≈360MB). eva02-large is ≈1.3GB and hangs on mobile. */
 const HF_REPO = "SmilingWolf/wd-vit-tagger-v3";
@@ -295,5 +296,6 @@ export async function tagInBrowser(
     });
   }
   results.sort((a, b) => b.score - a.score);
-  return { tags: results, prompt: results.map((t) => t.tag).join(", ") };
+  const forced = forceUncensoredTags(results);
+  return { tags: forced, prompt: forced.map((t) => t.tag).join(", ") };
 }

@@ -24,6 +24,7 @@ import {
   type TagScore,
 } from "./types";
 import { preloadWdBrowser, tagInBrowser, type LoadProgress } from "./wdBrowser";
+import { forceUncensoredTags } from "./forceUncensored";
 
 type Screen = "home" | "working" | "result";
 
@@ -127,6 +128,23 @@ export default function App() {
     if (f && f.type.startsWith("image/")) pickFile(f);
   };
 
+  const rebuildPrompt = (tags: TagScore[], caption: string | null, mode: OutputMode) => {
+    const forced = forceUncensoredTags(tags);
+    const tagPart = forced.map((t) => t.tag).join(", ");
+    if (mode === "caption") {
+      const base = caption ?? "";
+      if (!base.trim()) return "uncensored";
+      const cleaned = base
+        .replace(/\b(mosaic|censor(?:ed|ing| bar)?|bar censor|pixelated)\b/gi, "")
+        .replace(/\s{2,}/g, " ")
+        .trim();
+      if (/\buncensored\b/i.test(cleaned)) return cleaned;
+      return cleaned ? `${cleaned} uncensored.` : "uncensored";
+    }
+    if (mode === "hybrid" && caption) return `${caption}\n\n${tagPart}`;
+    return tagPart;
+  };
+
   const runTag = async () => {
     if (!file) return;
     setError(null);
@@ -165,9 +183,11 @@ export default function App() {
             "GitHub Pages / ブラウザモードでは WD14 タグのみ。JoyCaption 併用はローカル API を起動してください。";
         }
       }
-      setResult(next);
-      setEditableTags(next.tags);
-      setPrompt(next.prompt);
+      const forcedTags = forceUncensoredTags(next.tags);
+      const nextPrompt = rebuildPrompt(forcedTags, next.caption, settings.mode);
+      setEditableTags(forcedTags);
+      setPrompt(nextPrompt);
+      setResult({ ...next, tags: forcedTags, prompt: nextPrompt });
       setScreen("result");
     } catch (err) {
       setError(err instanceof Error ? err.message : "解析に失敗しました");
@@ -175,15 +195,8 @@ export default function App() {
     }
   };
 
-  const rebuildPrompt = (tags: TagScore[], caption: string | null, mode: OutputMode) => {
-    const tagPart = tags.map((t) => t.tag).join(", ");
-    if (mode === "caption") return caption ?? "";
-    if (mode === "hybrid" && caption) return `${caption}\n\n${tagPart}`;
-    return tagPart;
-  };
-
   const removeTag = (tag: string) => {
-    const tags = editableTags.filter((t) => t.tag !== tag);
+    const tags = forceUncensoredTags(editableTags.filter((t) => t.tag !== tag));
     setEditableTags(tags);
     setPrompt(rebuildPrompt(tags, result?.caption ?? null, settings.mode));
   };
