@@ -6,10 +6,7 @@ import {
   useTransition,
   type DragEvent,
 } from "react";
-import { M3eButton } from "@m3e/react/button";
 import { M3eLoadingIndicator } from "@m3e/react/loading-indicator";
-import { M3eSegmentedButton } from "@m3e/react/segmented-button";
-import { M3eButtonSegment } from "@m3e/react/segmented-button";
 import { M3eSlider } from "@m3e/react/slider";
 import { M3eSliderThumb } from "@m3e/react/slider";
 import { M3eTheme } from "@m3e/react/theme";
@@ -275,19 +272,20 @@ export default function App() {
   const canAnalyze = !!file && screen !== "working" && modelReady;
 
   return (
-    <M3eTheme color="#0E7490" variant="tonal-spot" scheme="light" motion="expressive">
-      <div className="atmosphere" aria-hidden="true">
-        <div className="aurora-shard a" />
-        <div className="aurora-shard b" />
-      </div>
+    <M3eTheme color="#3D5A80" variant="tonal-spot" scheme="light" motion="expressive">
+      <div className="atmosphere" aria-hidden="true" />
       <div className={`app-shell ${showingResult ? "has-dock" : ""}`}>
         <div className="toolbar">
           <span className="muted" title={apiStatus}>
             {apiStatus || "準備中…"}
           </span>
-          <M3eButton variant="text" onClick={() => setShowSettings((v) => !v)}>
-            設定
-          </M3eButton>
+          <button
+            type="button"
+            className="toolbar-gear"
+            onClick={() => setShowSettings((v) => !v)}
+          >
+            {showSettings ? "閉じる" : "設定"}
+          </button>
         </div>
 
         {showSettings && (
@@ -390,12 +388,12 @@ export default function App() {
 
         <header className={`brand ${showingResult ? "brand-compact" : ""}`}>
           <h1>vision</h1>
-          {!showingResult && <p>画像を、澄んだタグへ。端末の中だけで。</p>}
+          {!showingResult && <p>画像からタグへ。すべて端末の中で。</p>}
         </header>
 
         <div className="stack">
           {!showingResult && (
-            <M3eSegmentedButton>
+            <div className="mode-row" role="radiogroup" aria-label="出力モード">
               {(
                 [
                   ["booru", "Booru"],
@@ -403,17 +401,18 @@ export default function App() {
                   ["hybrid", "Hybrid"],
                 ] as const
               ).map(([value, label]) => (
-                <M3eButtonSegment
+                <button
                   key={value}
-                  value={value}
-                  checked={settings.mode === value}
-                  onChange={() => setSettings((s) => ({ ...s, mode: value }))}
+                  type="button"
+                  role="radio"
+                  className="mode-btn"
+                  aria-checked={settings.mode === value}
                   onClick={() => setSettings((s) => ({ ...s, mode: value }))}
                 >
                   {label}
-                </M3eButtonSegment>
+                </button>
               ))}
-            </M3eSegmentedButton>
+            </div>
           )}
 
           {showingResult && previewUrl ? (
