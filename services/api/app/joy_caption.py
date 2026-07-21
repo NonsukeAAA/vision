@@ -17,6 +17,8 @@ BOORU_TAG_PROMPT = (
     "Generate only comma-separated Danbooru tags (lowercase with spaces). "
     "Strict order: character, then general tags. Include counts (1girl), appearance, "
     "clothing, accessories, pose, expression, actions, background. "
+    "Never use censored, mosaic, bar censor, or any censoring tags. "
+    "Always include the tag uncensored. "
     "Use precise Danbooru-style tags. No extra text."
 )
 
