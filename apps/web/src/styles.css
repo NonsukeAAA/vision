@@ -42,11 +42,11 @@
 
   --space-xs: 4px;
   --space-sm: 8px;
-  --space-md: 16px;
-  --space-lg: 24px;
-  --space-xl: 32px;
-  --space-xxl: 48px;
-  --space-hero: 64px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 20px;
+  --space-xxl: 28px;
+  --space-hero: 20px;
 
   --font: "Roboto Flex", system-ui, sans-serif;
   --ease-expressive: cubic-bezier(0.2, 0, 0, 1);
@@ -69,8 +69,8 @@ body,
 body {
   font-family: var(--font);
   background:
-    radial-gradient(1200px 600px at 10% -10%, color-mix(in srgb, var(--color-primary-container) 55%, transparent), transparent 60%),
-    radial-gradient(900px 500px at 100% 0%, color-mix(in srgb, var(--color-tertiary-container) 40%, transparent), transparent 55%),
+    radial-gradient(900px 420px at 10% -10%, color-mix(in srgb, var(--color-primary-container) 55%, transparent), transparent 60%),
+    radial-gradient(700px 360px at 100% 0%, color-mix(in srgb, var(--color-tertiary-container) 40%, transparent), transparent 55%),
     var(--color-surface);
   color: var(--color-on-surface);
   -webkit-font-smoothing: antialiased;
@@ -85,45 +85,57 @@ textarea {
 .app-shell {
   width: min(720px, 100%);
   margin: 0 auto;
-  padding: var(--space-lg) var(--space-margin, var(--space-lg)) var(--space-xxl);
+  padding: var(--space-md) var(--space-margin, var(--space-md)) var(--space-xl);
+}
+
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
 }
 
 .brand {
-  margin: var(--space-hero) 0 var(--space-lg);
-  animation: rise 560ms var(--spring) both;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-sm) var(--space-md);
+  margin: 0 0 var(--space-md);
+  animation: rise 420ms var(--spring) both;
 }
 
 .brand h1 {
   margin: 0;
-  font-size: clamp(2.75rem, 8vw, 3.5rem);
+  font-size: clamp(1.75rem, 5vw, 2.125rem);
   font-weight: 700;
   letter-spacing: -0.02em;
-  line-height: 1.12;
+  line-height: 1.15;
   color: var(--color-primary);
 }
 
 .brand p {
-  margin: var(--space-sm) 0 0;
-  max-width: 36ch;
-  font-size: 1rem;
-  line-height: 1.5;
+  margin: 0;
+  max-width: 42ch;
+  font-size: 0.875rem;
+  line-height: 1.35;
   color: var(--color-on-surface-variant);
 }
 
 .panel {
   background: var(--color-surface-container-low);
-  border-radius: var(--radius-lg);
-  padding: var(--space-lg);
-  animation: rise 640ms var(--spring) both;
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  animation: rise 480ms var(--spring) both;
 }
 
 .dropzone {
   display: grid;
   place-items: center;
-  gap: var(--space-md);
-  min-height: 220px;
-  padding: var(--space-xxl) var(--space-lg);
-  border-radius: var(--radius-xl);
+  gap: var(--space-xs);
+  min-height: 112px;
+  padding: var(--space-md) var(--space-lg);
+  border-radius: var(--radius-lg);
   background: var(--color-surface-container);
   border: 2px dashed var(--color-outline-variant);
   color: var(--color-on-surface-variant);
@@ -145,20 +157,21 @@ textarea {
 .dropzone.dragging {
   border-color: var(--color-primary);
   border-style: solid;
-  transform: scale(1.015);
+  transform: scale(1.01);
   background: color-mix(in srgb, var(--color-primary-container) 50%, var(--color-surface-container));
 }
 
 .dropzone strong {
   color: var(--color-on-surface);
   font-weight: 600;
+  font-size: 0.9375rem;
 }
 
 .preview {
   width: 100%;
-  max-height: 360px;
+  max-height: 160px;
   object-fit: contain;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   background: var(--color-surface-container-highest);
 }
 
@@ -171,49 +184,50 @@ textarea {
 
 .stack {
   display: grid;
-  gap: var(--space-md);
+  gap: var(--space-sm);
 }
 
 .section-title {
   margin: 0;
-  font-size: 1.375rem;
+  font-size: 1.125rem;
   font-weight: 600;
-  line-height: 1.27;
+  line-height: 1.25;
 }
 
 .muted {
   color: var(--color-on-surface-variant);
-  font-size: 0.875rem;
-  line-height: 1.43;
+  font-size: 0.8125rem;
+  line-height: 1.35;
 }
 
 .prompt-box {
   width: 100%;
-  min-height: 140px;
+  min-height: 88px;
   resize: vertical;
-  padding: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
   border: none;
   border-radius: var(--radius-xs);
   background: var(--color-surface-container-highest);
   color: var(--color-on-surface);
-  line-height: 1.5;
+  line-height: 1.45;
+  font-size: 0.875rem;
 }
 
 .chip-wrap {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-sm);
+  gap: 6px;
 }
 
 .tag-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
+  gap: 4px;
+  padding: 4px 8px;
   border-radius: var(--radius-sm);
   background: var(--color-surface-container-high);
   color: var(--color-on-surface);
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   font-weight: 500;
   border: none;
   cursor: pointer;
@@ -228,22 +242,23 @@ textarea {
 
 .tag-chip .score {
   color: var(--color-on-surface-variant);
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   font-weight: 500;
 }
 
 .settings {
   display: grid;
-  gap: var(--space-md);
-  padding: var(--space-lg);
-  border-radius: var(--radius-lg);
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  margin-bottom: var(--space-sm);
+  border-radius: var(--radius-md);
   background: var(--color-surface-container);
 }
 
 .settings label {
   display: grid;
-  gap: var(--space-xs);
-  font-size: 0.75rem;
+  gap: 2px;
+  font-size: 0.6875rem;
   font-weight: 500;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -252,39 +267,34 @@ textarea {
 
 .settings input[type="text"],
 .settings select {
-  padding: 12px 14px;
+  padding: 8px 10px;
   border: none;
   border-radius: var(--radius-xs);
   background: var(--color-surface-container-highest);
   color: var(--color-on-surface);
-}
-
-.toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--space-md);
-  margin-bottom: var(--space-lg);
+  font-size: 0.875rem;
 }
 
 .status-line {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  min-height: 48px;
+  min-height: 36px;
+  padding: var(--space-sm) var(--space-md);
 }
 
 .error {
   color: var(--color-error);
   background: var(--color-error-container);
-  padding: var(--space-md);
-  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
 }
 
 @keyframes rise {
   from {
     opacity: 0;
-    transform: translateY(12px) scale(0.98);
+    transform: translateY(8px) scale(0.99);
   }
   to {
     opacity: 1;
@@ -293,12 +303,14 @@ textarea {
 }
 
 @media (max-width: 600px) {
-  .brand {
-    margin-top: var(--space-xxl);
+  .toolbar {
+    flex-direction: row;
+    align-items: center;
   }
 
-  .toolbar {
+  .brand {
     flex-direction: column;
-    align-items: stretch;
+    align-items: flex-start;
+    gap: 2px;
   }
 }
