@@ -1,21 +1,135 @@
 import * as ort from "onnxruntime-web";
 import type { TagScore } from "./types";
 
-const HF_BASE =
-  "https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3/resolve/main";
+/** Browser-friendly WD v3 (≈360MB). eva02-large is ≈1.3GB and hangs on mobile Pages. */
+const HF_REPO = "SmilingWolf/wd-vit-tagger-v3";
+const HF_BASE = `https://huggingface.co/${HF_REPO}/resolve/main`;
+const CACHE_NAME = "vision-wd-vit-v3-v1";
+const MODEL_URL = `${HF_BASE}/model.onnx`;
+const TAGS_URL = `${HF_BASE}/selected_tags.csv`;
 const TARGET = 448;
 
 type TagRow = { name: string; category: number };
+export type LoadProgress = {
+  phase: "idle" | "tags" | "model" | "init" | "ready" | "error";
+  loaded: number;
+  total: number;
+  message: string;
+};
+
+type ProgressFn = (p: LoadProgress) => void;
 
 let sessionPromise: Promise<ort.InferenceSession> | null = null;
 let tagsPromise: Promise<TagRow[]> | null = null;
+let lastProgress: LoadProgress = {
+  phase: "idle",
+  loaded: 0,
+  total: 0,
+  message: "待機中",
+};
 
-async function loadTags(): Promise<TagRow[]> {
+function emit(cb: ProgressFn | undefined, p: LoadProgress) {
+  lastProgress = p;
+  cb?.(p);
+}
+
+export function getLoadProgress(): LoadProgress {
+  return lastProgress;
+}
+
+async function cacheMatch(url: string): Promise<Response | undefined> {
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    return (await cache.match(url)) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function cachePut(url: string, res: Response): Promise<void> {
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    await cache.put(url, res);
+  } catch {
+    // Quota / private mode — ignore
+  }
+}
+
+async function fetchWithProgress(
+  url: string,
+  onProgress: ProgressFn | undefined,
+  label: string,
+): Promise<ArrayBuffer> {
+  const cached = await cacheMatch(url);
+  if (cached) {
+    emit(onProgress, {
+      phase: "model",
+      loaded: 1,
+      total: 1,
+      message: `${label}（キャッシュ）`,
+    });
+    return cached.arrayBuffer();
+  }
+
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${label}の取得に失敗 (${res.status})`);
+
+  const total = Number(res.headers.get("content-length") || 0);
+  if (!res.body) {
+    const buf = await res.arrayBuffer();
+    await cachePut(url, new Response(buf.slice(0)));
+    return buf;
+  }
+
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let loaded = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.byteLength;
+    emit(onProgress, {
+      phase: "model",
+      loaded,
+      total: total || loaded,
+      message:
+        total > 0
+          ? `${label} ${Math.min(99, Math.round((loaded / total) * 100))}%`
+          : `${label} ${(loaded / 1e6).toFixed(1)} MB`,
+    });
+  }
+
+  const merged = new Uint8Array(loaded);
+  let offset = 0;
+  for (const c of chunks) {
+    merged.set(c, offset);
+    offset += c.byteLength;
+  }
+  const buf = merged.buffer;
+  await cachePut(url, new Response(buf.slice(0), { headers: { "Content-Type": "application/octet-stream" } }));
+  return buf;
+}
+
+async function loadTags(onProgress?: ProgressFn): Promise<TagRow[]> {
   if (!tagsPromise) {
     tagsPromise = (async () => {
-      const res = await fetch(`${HF_BASE}/selected_tags.csv`);
-      if (!res.ok) throw new Error("Failed to download WD tags CSV");
-      const text = await res.text();
+      emit(onProgress, {
+        phase: "tags",
+        loaded: 0,
+        total: 1,
+        message: "タグ辞書を取得中…",
+      });
+      let text: string;
+      const cached = await cacheMatch(TAGS_URL);
+      if (cached) {
+        text = await cached.text();
+      } else {
+        const res = await fetch(TAGS_URL);
+        if (!res.ok) throw new Error("タグ辞書の取得に失敗しました");
+        text = await res.text();
+        await cachePut(TAGS_URL, new Response(text, { headers: { "Content-Type": "text/csv" } }));
+      }
       const lines = text.trim().split(/\r?\n/);
       const header = lines[0].split(",");
       const nameIdx = header.indexOf("name");
@@ -27,20 +141,52 @@ async function loadTags(): Promise<TagRow[]> {
           category: Number(cols[catIdx] ?? 0),
         };
       });
-    })();
+    })().catch((err) => {
+      tagsPromise = null;
+      throw err;
+    });
   }
   return tagsPromise;
 }
 
-async function loadSession(): Promise<ort.InferenceSession> {
+async function loadSession(onProgress?: ProgressFn): Promise<ort.InferenceSession> {
   if (!sessionPromise) {
     sessionPromise = (async () => {
       ort.env.wasm.wasmPaths =
         "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.21.0/dist/";
-      return ort.InferenceSession.create(`${HF_BASE}/model.onnx`, {
+      emit(onProgress, {
+        phase: "model",
+        loaded: 0,
+        total: 1,
+        message: "WD モデルをダウンロード中（初回のみ・約360MB）…",
+      });
+      const modelBuf = await fetchWithProgress(MODEL_URL, onProgress, "モデル");
+      emit(onProgress, {
+        phase: "init",
+        loaded: 1,
+        total: 1,
+        message: "ONNX ランタイム初期化中…",
+      });
+      const session = await ort.InferenceSession.create(modelBuf, {
         executionProviders: ["wasm"],
       });
-    })();
+      emit(onProgress, {
+        phase: "ready",
+        loaded: 1,
+        total: 1,
+        message: "ブラウザ内 WD ViT 準備完了",
+      });
+      return session;
+    })().catch((err) => {
+      sessionPromise = null;
+      emit(onProgress, {
+        phase: "error",
+        loaded: 0,
+        total: 0,
+        message: err instanceof Error ? err.message : "モデル読み込み失敗",
+      });
+      throw err;
+    });
   }
   return sessionPromise;
 }
@@ -63,7 +209,6 @@ async function imageToTensor(file: File): Promise<ort.Tensor> {
   bitmap.close();
 
   const { data } = ctx.getImageData(0, 0, TARGET, TARGET);
-  // BGR float32 NHWC
   const float = new Float32Array(TARGET * TARGET * 3);
   for (let i = 0, j = 0; i < data.length; i += 4, j += 3) {
     float[j] = data[i + 2];
@@ -73,8 +218,10 @@ async function imageToTensor(file: File): Promise<ort.Tensor> {
   return new ort.Tensor("float32", float, [1, TARGET, TARGET, 3]);
 }
 
-export async function preloadWdBrowser(): Promise<void> {
-  await Promise.all([loadSession(), loadTags()]);
+/** Warm tags + model with progress (safe to call from UI). */
+export async function preloadWdBrowser(onProgress?: ProgressFn): Promise<void> {
+  await loadTags(onProgress);
+  await loadSession(onProgress);
 }
 
 export async function tagInBrowser(
@@ -84,8 +231,12 @@ export async function tagInBrowser(
     characterThreshold: number;
     includeRating: boolean;
   },
+  onProgress?: ProgressFn,
 ): Promise<{ tags: TagScore[]; prompt: string }> {
-  const [session, tags] = await Promise.all([loadSession(), loadTags()]);
+  const [session, tags] = await Promise.all([
+    loadSession(onProgress),
+    loadTags(onProgress),
+  ]);
   const input = await imageToTensor(file);
   const inputName = session.inputNames[0];
   const output = await session.run({ [inputName]: input });

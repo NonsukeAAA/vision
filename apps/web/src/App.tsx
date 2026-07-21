@@ -23,14 +23,9 @@ import {
   type TagResult,
   type TagScore,
 } from "./types";
-import { preloadWdBrowser, tagInBrowser } from "./wdBrowser";
+import { preloadWdBrowser, tagInBrowser, type LoadProgress } from "./wdBrowser";
 
 type Screen = "home" | "working" | "result";
-
-async function ensureBrowserReady(): Promise<string> {
-  await preloadWdBrowser();
-  return "ブラウザ内 WD EVA02 準備完了（端末ローカル推論）";
-}
 
 export default function App() {
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
@@ -43,12 +38,18 @@ export default function App() {
   const [prompt, setPrompt] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [apiStatus, setApiStatus] = useState<string>("モデル準備中…");
-  const [modelReady, setModelReady] = useState(false);
+  const [apiStatus, setApiStatus] = useState<string>("準備完了 · 解析時にモデルを取得します");
+  const [modelReady, setModelReady] = useState(true);
+  const [loadProgress, setLoadProgress] = useState<LoadProgress | null>(null);
   const [snack, setSnack] = useState<string | null>(null);
   const [, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
   const onPages = isGitHubPagesHost();
+
+  const onWdProgress = (p: LoadProgress) => {
+    setLoadProgress(p);
+    setApiStatus(p.message);
+  };
 
   useEffect(() => {
     saveSettings(settings);
@@ -58,20 +59,25 @@ export default function App() {
     let cancelled = false;
     (async () => {
       if (settings.engine === "browser") {
-        try {
-          const msg = await ensureBrowserReady();
-          if (!cancelled) {
-            setModelReady(true);
-            setApiStatus(msg);
-          }
-        } catch (err) {
-          if (!cancelled) {
-            setModelReady(false);
-            setApiStatus(
-              err instanceof Error ? err.message : "モデル読み込み失敗",
-            );
-          }
-        }
+        setModelReady(true);
+        setApiStatus("ブラウザ推論 · 初回はモデル取得あり（約360MB）");
+        // Background warm-up (does not block the UI)
+        void preloadWdBrowser(onWdProgress)
+          .then(() => {
+            if (!cancelled) {
+              setApiStatus("ブラウザ内 WD ViT 準備完了（端末ローカル）");
+              setLoadProgress(null);
+            }
+          })
+          .catch((err) => {
+            if (!cancelled) {
+              setApiStatus(
+                err instanceof Error
+                  ? `モデル取得待ち: ${err.message}`
+                  : "モデル取得に失敗（解析時に再試行）",
+              );
+            }
+          });
         return;
       }
 
@@ -86,28 +92,11 @@ export default function App() {
         return;
       }
 
-      // API 不通時はブラウザ推論へ自動フォールバック（Pages でも解析可能にする）
-      try {
-        const msg = await ensureBrowserReady();
-        if (cancelled) return;
-        setSettings((s) => ({ ...s, engine: "browser" }));
-        setModelReady(true);
-        setApiStatus(
-          `API 未接続のためブラウザ推論に切替 · ${msg}`,
-        );
-        setSnack("ローカル API に接続できないため、ブラウザ内 WD14 に切り替えました");
-      } catch (err) {
-        if (cancelled) return;
-        setModelReady(false);
-        setApiStatus(
-          `API 未接続: ${health.detail ?? "error"} / ブラウザ推論も失敗`,
-        );
-        setError(
-          err instanceof Error
-            ? err.message
-            : "推論エンジンを初期化できませんでした",
-        );
-      }
+      setSettings((s) => ({ ...s, engine: "browser" }));
+      setModelReady(true);
+      setApiStatus("API 未接続のためブラウザ推論に切替（初回約360MB）");
+      setSnack("ローカル API に接続できないため、ブラウザ内 WD14 に切り替えました");
+      void preloadWdBrowser(onWdProgress).catch(() => undefined);
     })();
     return () => {
       cancelled = true;
@@ -152,11 +141,15 @@ export default function App() {
             "詳細キャプション（JoyCaption）はローカル API モードが必要です。設定で engine を local-api に切り替えてください。",
           );
         }
-        const browser = await tagInBrowser(file, {
-          threshold: settings.threshold,
-          characterThreshold: settings.characterThreshold,
-          includeRating: settings.includeRating,
-        });
+        const browser = await tagInBrowser(
+          file,
+          {
+            threshold: settings.threshold,
+            characterThreshold: settings.characterThreshold,
+            includeRating: settings.includeRating,
+          },
+          onWdProgress,
+        );
         next = {
           mode: settings.mode === "hybrid" ? "booru" : settings.mode,
           tags: browser.tags,
@@ -392,9 +385,35 @@ export default function App() {
           {screen === "working" && (
             <div className="status-line panel">
               <M3eLoadingIndicator />
-              <span>情景とタグを読み取っています…</span>
+              <span>
+                {loadProgress?.message ||
+                  apiStatus ||
+                  "情景とタグを読み取っています…"}
+              </span>
             </div>
           )}
+
+          {loadProgress &&
+            screen !== "working" &&
+            loadProgress.phase !== "ready" &&
+            loadProgress.phase !== "idle" && (
+              <div className="panel muted">
+                {loadProgress.message}
+                {loadProgress.total > 0 && loadProgress.phase === "model" && (
+                  <>
+                    {" "}
+                    (
+                    {Math.min(
+                      99,
+                      Math.round(
+                        (loadProgress.loaded / loadProgress.total) * 100,
+                      ),
+                    )}
+                    %)
+                  </>
+                )}
+              </div>
+            )}
 
           {error && <div className="error">{error}</div>}
 
