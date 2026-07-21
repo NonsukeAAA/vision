@@ -1,7 +1,7 @@
-import * as ort from "onnxruntime-web";
+import * as ort from "onnxruntime-web/wasm";
 import type { TagScore } from "./types";
 
-/** Browser-friendly WD v3 (≈360MB). eva02-large is ≈1.3GB and hangs on mobile Pages. */
+/** Browser-friendly WD v3 (≈360MB). */
 const HF_REPO = "SmilingWolf/wd-vit-tagger-v3";
 const HF_BASE = `https://huggingface.co/${HF_REPO}/resolve/main`;
 const CACHE_NAME = "vision-wd-vit-v3-v1";
@@ -21,6 +21,7 @@ type ProgressFn = (p: LoadProgress) => void;
 
 let sessionPromise: Promise<ort.InferenceSession> | null = null;
 let tagsPromise: Promise<TagRow[]> | null = null;
+let wasmConfigured = false;
 let lastProgress: LoadProgress = {
   phase: "idle",
   loaded: 0,
@@ -35,6 +36,26 @@ function emit(cb: ProgressFn | undefined, p: LoadProgress) {
 
 export function getLoadProgress(): LoadProgress {
   return lastProgress;
+}
+
+function isAppleMobile(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /iP(hone|od|ad)/.test(navigator.userAgent);
+}
+
+/** Match JS↔WASM versions and force single-thread for Safari / GitHub Pages. */
+function configureOrtWasm() {
+  if (wasmConfigured) return;
+  const ver = ort.env.versions?.web ?? "1.27.0";
+  // MUST match the installed onnxruntime-web JS version (mismatch → _OrtGetInputOutputMetadata errors)
+  ort.env.wasm.wasmPaths = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ver}/dist/`;
+  // GitHub Pages is not crossOriginIsolated — multi-thread WASM breaks (esp. Safari).
+  ort.env.wasm.numThreads = 1;
+  ort.env.wasm.proxy = false;
+  if (isAppleMobile()) {
+    ort.env.wasm.simd = false;
+  }
+  wasmConfigured = true;
 }
 
 async function cacheMatch(url: string): Promise<Response | undefined> {
@@ -107,7 +128,12 @@ async function fetchWithProgress(
     offset += c.byteLength;
   }
   const buf = merged.buffer;
-  await cachePut(url, new Response(buf.slice(0), { headers: { "Content-Type": "application/octet-stream" } }));
+  await cachePut(
+    url,
+    new Response(buf.slice(0), {
+      headers: { "Content-Type": "application/octet-stream" },
+    }),
+  );
   return buf;
 }
 
@@ -128,7 +154,10 @@ async function loadTags(onProgress?: ProgressFn): Promise<TagRow[]> {
         const res = await fetch(TAGS_URL);
         if (!res.ok) throw new Error("タグ辞書の取得に失敗しました");
         text = await res.text();
-        await cachePut(TAGS_URL, new Response(text, { headers: { "Content-Type": "text/csv" } }));
+        await cachePut(
+          TAGS_URL,
+          new Response(text, { headers: { "Content-Type": "text/csv" } }),
+        );
       }
       const lines = text.trim().split(/\r?\n/);
       const header = lines[0].split(",");
@@ -149,11 +178,12 @@ async function loadTags(onProgress?: ProgressFn): Promise<TagRow[]> {
   return tagsPromise;
 }
 
-async function loadSession(onProgress?: ProgressFn): Promise<ort.InferenceSession> {
+async function loadSession(
+  onProgress?: ProgressFn,
+): Promise<ort.InferenceSession> {
   if (!sessionPromise) {
     sessionPromise = (async () => {
-      ort.env.wasm.wasmPaths =
-        "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.21.0/dist/";
+      configureOrtWasm();
       emit(onProgress, {
         phase: "model",
         loaded: 0,
@@ -167,9 +197,13 @@ async function loadSession(onProgress?: ProgressFn): Promise<ort.InferenceSessio
         total: 1,
         message: "ONNX ランタイム初期化中…",
       });
-      const session = await ort.InferenceSession.create(modelBuf, {
-        executionProviders: ["wasm"],
-      });
+
+      const tryCreate = async () =>
+        ort.InferenceSession.create(new Uint8Array(modelBuf), {
+          executionProviders: ["wasm"],
+        });
+
+      const session = await tryCreate();
       emit(onProgress, {
         phase: "ready",
         loaded: 1,
@@ -218,7 +252,6 @@ async function imageToTensor(file: File): Promise<ort.Tensor> {
   return new ort.Tensor("float32", float, [1, TARGET, TARGET, 3]);
 }
 
-/** Warm tags + model with progress (safe to call from UI). */
 export async function preloadWdBrowser(onProgress?: ProgressFn): Promise<void> {
   await loadTags(onProgress);
   await loadSession(onProgress);
