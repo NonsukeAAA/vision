@@ -6,10 +6,7 @@ import {
   useTransition,
   type DragEvent,
 } from "react";
-import { M3eButton } from "@m3e/react/button";
 import { M3eLoadingIndicator } from "@m3e/react/loading-indicator";
-import { M3eSegmentedButton } from "@m3e/react/segmented-button";
-import { M3eButtonSegment } from "@m3e/react/segmented-button";
 import { M3eSlider } from "@m3e/react/slider";
 import { M3eSliderThumb } from "@m3e/react/slider";
 import { M3eTheme } from "@m3e/react/theme";
@@ -24,6 +21,7 @@ import {
   type TagScore,
 } from "./types";
 import { preloadWdBrowser, tagInBrowser, type LoadProgress } from "./wdBrowser";
+import { forceUncensoredTags } from "./forceUncensored";
 
 type Screen = "home" | "working" | "result";
 
@@ -42,9 +40,14 @@ export default function App() {
   const [modelReady, setModelReady] = useState(true);
   const [loadProgress, setLoadProgress] = useState<LoadProgress | null>(null);
   const [snack, setSnack] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const [, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
+  const resultRef = useRef<HTMLElement>(null);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+  const copyResetRef = useRef<number | null>(null);
   const onPages = isGitHubPagesHost();
+  const showingResult = screen === "result" && !!result;
 
   const onWdProgress = (p: LoadProgress) => {
     setLoadProgress(p);
@@ -61,7 +64,6 @@ export default function App() {
       if (settings.engine === "browser") {
         setModelReady(true);
         setApiStatus("ブラウザ推論 · 初回はモデル取得あり（約360MB）");
-        // Background warm-up (does not block the UI)
         void preloadWdBrowser(onWdProgress)
           .then(() => {
             if (!cancelled) {
@@ -109,6 +111,21 @@ export default function App() {
     return () => window.clearTimeout(t);
   }, [snack]);
 
+  useEffect(() => {
+    if (screen !== "result") return;
+    const id = window.requestAnimationFrame(() => {
+      resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      promptRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [screen, result]);
+
+  useEffect(() => {
+    return () => {
+      if (copyResetRef.current) window.clearTimeout(copyResetRef.current);
+    };
+  }, []);
+
   const pickFile = (next: File | null) => {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setFile(next);
@@ -117,7 +134,9 @@ export default function App() {
     setEditableTags([]);
     setPrompt("");
     setError(null);
+    setCopied(false);
     if (next) startTransition(() => setScreen("home"));
+    else setScreen("home");
   };
 
   const onDrop = (e: DragEvent) => {
@@ -127,9 +146,27 @@ export default function App() {
     if (f && f.type.startsWith("image/")) pickFile(f);
   };
 
+  const rebuildPrompt = (tags: TagScore[], caption: string | null, mode: OutputMode) => {
+    const forced = forceUncensoredTags(tags);
+    const tagPart = forced.map((t) => t.tag).join(", ");
+    if (mode === "caption") {
+      const base = caption ?? "";
+      if (!base.trim()) return "uncensored";
+      const cleaned = base
+        .replace(/\b(mosaic|censor(?:ed|ing| bar)?|bar censor|pixelated)\b/gi, "")
+        .replace(/\s{2,}/g, " ")
+        .trim();
+      if (/\buncensored\b/i.test(cleaned)) return cleaned;
+      return cleaned ? `${cleaned} uncensored.` : "uncensored";
+    }
+    if (mode === "hybrid" && caption) return `${caption}\n\n${tagPart}`;
+    return tagPart;
+  };
+
   const runTag = async () => {
     if (!file) return;
     setError(null);
+    setCopied(false);
     setScreen("working");
     try {
       let next: TagResult;
@@ -165,9 +202,11 @@ export default function App() {
             "GitHub Pages / ブラウザモードでは WD14 タグのみ。JoyCaption 併用はローカル API を起動してください。";
         }
       }
-      setResult(next);
-      setEditableTags(next.tags);
-      setPrompt(next.prompt);
+      const forcedTags = forceUncensoredTags(next.tags);
+      const nextPrompt = rebuildPrompt(forcedTags, next.caption, settings.mode);
+      setEditableTags(forcedTags);
+      setPrompt(nextPrompt);
+      setResult({ ...next, tags: forcedTags, prompt: nextPrompt });
       setScreen("result");
     } catch (err) {
       setError(err instanceof Error ? err.message : "解析に失敗しました");
@@ -175,44 +214,82 @@ export default function App() {
     }
   };
 
-  const rebuildPrompt = (tags: TagScore[], caption: string | null, mode: OutputMode) => {
-    const tagPart = tags.map((t) => t.tag).join(", ");
-    if (mode === "caption") return caption ?? "";
-    if (mode === "hybrid" && caption) return `${caption}\n\n${tagPart}`;
-    return tagPart;
-  };
-
   const removeTag = (tag: string) => {
-    const tags = editableTags.filter((t) => t.tag !== tag);
+    const tags = forceUncensoredTags(editableTags.filter((t) => t.tag !== tag));
     setEditableTags(tags);
     setPrompt(rebuildPrompt(tags, result?.caption ?? null, settings.mode));
+    setCopied(false);
+  };
+
+  const syncPromptFromTags = () => {
+    const next = rebuildPrompt(editableTags, result?.caption ?? null, settings.mode);
+    setPrompt(next);
+    setCopied(false);
+    setSnack("タグからプロンプトを再生成しました");
   };
 
   const copyPrompt = async () => {
-    await navigator.clipboard.writeText(prompt);
-    setSnack("プロンプトをコピーしました");
+    if (!prompt.trim()) return;
+    try {
+      await navigator.clipboard.writeText(prompt);
+      setCopied(true);
+      setSnack("プロンプトをコピーしました");
+      if (copyResetRef.current) window.clearTimeout(copyResetRef.current);
+      copyResetRef.current = window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setSnack("コピーに失敗しました。手動で選択してください");
+      promptRef.current?.select();
+    }
   };
+
+  const runTagRef = useRef(runTag);
+  const copyPromptRef = useRef(copyPrompt);
+  runTagRef.current = runTag;
+  copyPromptRef.current = copyPrompt;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const meta = e.metaKey || e.ctrlKey;
+      if (meta && e.key === "Enter" && file && screen !== "working" && modelReady) {
+        e.preventDefault();
+        void runTagRef.current();
+      }
+      if (meta && e.shiftKey && (e.key === "c" || e.key === "C") && showingResult) {
+        e.preventDefault();
+        void copyPromptRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [file, screen, modelReady, showingResult]);
 
   const thresholdPercent = useMemo(
     () => Math.round(settings.threshold * 100),
     [settings.threshold],
   );
 
+  const tagCount = editableTags.length;
+  const canAnalyze = !!file && screen !== "working" && modelReady;
+
   return (
-    <M3eTheme color="#386A20" variant="tonal-spot" scheme="light" motion="expressive">
-      <div className="app-shell">
+    <M3eTheme color="#3D5A80" variant="tonal-spot" scheme="light" motion="expressive">
+      <div className="atmosphere" aria-hidden="true" />
+      <div className={`app-shell ${showingResult ? "has-dock" : ""}`}>
         <div className="toolbar">
-          <span className="muted">{apiStatus || "準備中…"}</span>
-          <M3eButton
-            variant="text"
+          <span className="muted" title={apiStatus}>
+            {apiStatus || "準備中…"}
+          </span>
+          <button
+            type="button"
+            className="toolbar-gear"
             onClick={() => setShowSettings((v) => !v)}
           >
-            設定
-          </M3eButton>
+            {showSettings ? "閉じる" : "設定"}
+          </button>
         </div>
 
         {showSettings && (
-          <div className="settings" style={{ marginBottom: "var(--space-lg)" }}>
+          <div className="settings">
             <p className="section-title">設定</p>
             {onPages && (
               <p className="muted">
@@ -275,7 +352,7 @@ export default function App() {
               </M3eSlider>
             </label>
             <label>
-              <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <span className="check-line">
                 <input
                   type="checkbox"
                   checked={settings.includeRating}
@@ -291,7 +368,7 @@ export default function App() {
             </label>
             {settings.engine === "local-api" && (
               <label>
-                <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <span className="check-line">
                   <input
                     type="checkbox"
                     checked={settings.enableJoy}
@@ -309,81 +386,144 @@ export default function App() {
           </div>
         )}
 
-        <header className="brand">
+        <header className={`brand ${showingResult ? "brand-compact" : ""}`}>
           <h1>vision</h1>
-          <p>画像を Stable Diffusion タグへ。端末ローカルで解析します。</p>
+          {!showingResult && <p>画像からタグへ。すべて端末の中で。</p>}
         </header>
 
         <div className="stack">
-          <M3eSegmentedButton>
-            {(
-              [
-                ["booru", "Booru"],
-                ["caption", "Caption"],
-                ["hybrid", "Hybrid"],
-              ] as const
-            ).map(([value, label]) => (
-              <M3eButtonSegment
-                key={value}
-                value={value}
-                checked={settings.mode === value}
-                onChange={() => setSettings((s) => ({ ...s, mode: value }))}
-                onClick={() => setSettings((s) => ({ ...s, mode: value }))}
+          {!showingResult && (
+            <div className="mode-row" role="radiogroup" aria-label="出力モード">
+              {(
+                [
+                  ["booru", "Booru"],
+                  ["caption", "Caption"],
+                  ["hybrid", "Hybrid"],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="radio"
+                  className="mode-btn"
+                  aria-checked={settings.mode === value}
+                  onClick={() => setSettings((s) => ({ ...s, mode: value }))}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {showingResult && previewUrl ? (
+            <div className="workbench">
+              <button
+                type="button"
+                className="workbench-thumb"
+                onClick={() => inputRef.current?.click()}
+                title="画像を変更"
+                aria-label="画像を変更"
               >
-                {label}
-              </M3eButtonSegment>
-            ))}
-          </M3eSegmentedButton>
+                <img src={previewUrl} alt="" />
+              </button>
+              <div className="workbench-meta">
+                <p className="workbench-title">{settings.mode}</p>
+                <p className="muted workbench-sub">
+                  {tagCount} tags
+                  {result?.device ? ` · ${result.device}` : ""}
+                </p>
+              </div>
+              <div className="workbench-actions">
+                <button
+                  type="button"
+                  className="btn-text"
+                  disabled={!canAnalyze}
+                  onClick={() => void runTag()}
+                >
+                  再解析
+                </button>
+                <button
+                  type="button"
+                  className="btn-text"
+                  onClick={() => {
+                    setScreen("home");
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                >
+                  戻る
+                </button>
+              </div>
+              <input
+                ref={inputRef}
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
+              />
+            </div>
+          ) : (
+            <>
+              <div
+                className={`dropzone ${dragging ? "dragging" : ""} ${screen === "working" ? "busy" : ""}`}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") inputRef.current?.click();
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragging(true);
+                }}
+                onDragLeave={() => setDragging(false)}
+                onDrop={onDrop}
+                onClick={() => inputRef.current?.click()}
+              >
+                {previewUrl ? (
+                  <img className="preview" src={previewUrl} alt="選択中の画像" />
+                ) : (
+                  <>
+                    <strong>画像をドロップ</strong>
+                    <span className="muted">クリックでも選択可</span>
+                  </>
+                )}
+                <input
+                  ref={inputRef}
+                  type="file"
+                  accept="image/*"
+                  hidden
+                  onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
+                />
+              </div>
 
-          <div
-            className={`dropzone ${dragging ? "dragging" : ""}`}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") inputRef.current?.click();
-            }}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={onDrop}
-            onClick={() => inputRef.current?.click()}
-          >
-            {previewUrl ? (
-              <img className="preview" src={previewUrl} alt="選択中の画像" />
-            ) : (
-              <>
-                <strong>画像をドロップ</strong>
-                <span className="muted">またはクリックして選択 · PNG / JPEG / WebP</span>
-              </>
-            )}
-            <input
-              ref={inputRef}
-              type="file"
-              accept="image/*"
-              hidden
-              onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
-            />
-          </div>
-
-          <div className="row">
-            <M3eButton
-              variant="filled"
-              disabled={!file || screen === "working" || !modelReady}
-              onClick={() => void runTag()}
-            >
-              解析する
-            </M3eButton>
-            {file && (
-              <M3eButton variant="text" onClick={() => pickFile(null)}>
-                クリア
-              </M3eButton>
-            )}
-          </div>
+              <div className="cta-block">
+                <button
+                  type="button"
+                  className="btn btn-primary btn-block"
+                  disabled={!canAnalyze}
+                  onClick={() => void runTag()}
+                >
+                  {screen === "working" ? "解析中…" : "解析する"}
+                </button>
+                <div className="cta-meta">
+                  {file ? (
+                    <button
+                      type="button"
+                      className="btn-text"
+                      onClick={() => pickFile(null)}
+                    >
+                      クリア
+                    </button>
+                  ) : (
+                    <span />
+                  )}
+                  <span className="shortcut-hint">⌘/Ctrl + Enter</span>
+                </div>
+              </div>
+            </>
+          )}
 
           {screen === "working" && (
-            <div className="status-line panel">
+            <div className="status-line" role="status" aria-live="polite">
               <M3eLoadingIndicator />
               <span>
                 {loadProgress?.message ||
@@ -397,7 +537,7 @@ export default function App() {
             screen !== "working" &&
             loadProgress.phase !== "ready" &&
             loadProgress.phase !== "idle" && (
-              <div className="panel muted">
+              <div className="status-line muted">
                 {loadProgress.message}
                 {loadProgress.total > 0 && loadProgress.phase === "model" && (
                   <>
@@ -415,74 +555,106 @@ export default function App() {
               </div>
             )}
 
-          {error && <div className="error">{error}</div>}
+          {error && (
+            <div className="error" role="alert">
+              {error}
+            </div>
+          )}
 
-          {screen === "result" && result && (
-            <section className="panel stack">
-              <h2 className="section-title">結果</h2>
-              <p className="muted">
-                device: {result.device}
-                {result.source.wd ? ` · wd: ${result.source.wd}` : ""}
-                {result.source.joy ? ` · joy: ${result.source.joy}` : ""}
-              </p>
-              {result.source.note && <p className="muted">{result.source.note}</p>}
-
-              {editableTags.length > 0 && (
-                <div className="chip-wrap">
-                  {editableTags.map((t) => (
-                    <button
-                      key={t.tag}
-                      type="button"
-                      className="tag-chip"
-                      onClick={() => removeTag(t.tag)}
-                      title="クリックで削除"
-                    >
-                      {t.tag}
-                      <span className="score">{t.score.toFixed(2)}</span>
-                    </button>
-                  ))}
-                </div>
+          {showingResult && result && (
+            <section className="result" ref={resultRef}>
+              {result.source.note && (
+                <p className="muted result-note">{result.source.note}</p>
               )}
 
-              <textarea
-                className="prompt-box"
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                aria-label="生成プロンプト"
-              />
-
-              <div className="row">
-                <M3eButton variant="filled" onClick={() => void copyPrompt()}>
-                  コピー
-                </M3eButton>
-                <M3eButton
-                  variant="tonal"
-                  onClick={() => {
-                    setScreen("home");
-                  }}
-                >
-                  戻る
-                </M3eButton>
+              <div className="prompt-block">
+                <div className="prompt-label-row">
+                  <label className="prompt-label" htmlFor="prompt-field">
+                    プロンプト
+                  </label>
+                  <span className="muted result-sub">
+                    {tagCount > 0 ? `${tagCount} tags` : "編集可"}
+                  </span>
+                </div>
+                <div className="prompt-shell">
+                  <textarea
+                    id="prompt-field"
+                    ref={promptRef}
+                    className="prompt-box"
+                    value={prompt}
+                    onChange={(e) => {
+                      setPrompt(e.target.value);
+                      setCopied(false);
+                    }}
+                    aria-label="生成プロンプト"
+                    rows={6}
+                  />
+                  <button
+                    type="button"
+                    className={`btn-icon-copy ${copied ? "is-copied" : ""}`}
+                    onClick={() => void copyPrompt()}
+                    disabled={!prompt.trim()}
+                    aria-label={copied ? "コピー済み" : "プロンプトをコピー"}
+                    title="コピー (⌘⇧C)"
+                  >
+                    {copied ? "済" : "Copy"}
+                  </button>
+                </div>
               </div>
+
+              {editableTags.length > 0 && (
+                <div className="tags-block">
+                  <div className="tags-head">
+                    <h3 className="tags-title">タグ · タップで除外</h3>
+                    <button
+                      type="button"
+                      className="btn-text"
+                      onClick={syncPromptFromTags}
+                    >
+                      タグから再生成
+                    </button>
+                  </div>
+                  <div className="chip-wrap">
+                    {editableTags.map((t) => (
+                      <button
+                        key={t.tag}
+                        type="button"
+                        className={`tag-chip ${t.tag === "uncensored" ? "tag-locked" : ""}`}
+                        onClick={() => removeTag(t.tag)}
+                        title={
+                          t.tag === "uncensored"
+                            ? "uncensored は常に付与されます"
+                            : "クリックで削除"
+                        }
+                      >
+                        {t.tag}
+                        <span className="score">{t.score.toFixed(2)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </section>
           )}
         </div>
 
+        {showingResult && (
+          <div className="action-dock" role="region" aria-label="コピー">
+            <button
+              type="button"
+              className={`btn btn-primary btn-block btn-dock-copy ${copied ? "is-copied" : ""}`}
+              onClick={() => void copyPrompt()}
+              disabled={!prompt.trim()}
+            >
+              {copied ? "コピーしました" : "コピー"}
+            </button>
+          </div>
+        )}
+
         {snack && (
           <div
             role="status"
-            style={{
-              position: "fixed",
-              left: "50%",
-              bottom: 24,
-              transform: "translateX(-50%)",
-              background: "var(--color-inverse-surface)",
-              color: "var(--color-inverse-on-surface)",
-              padding: "12px 20px",
-              borderRadius: "var(--radius-sm)",
-              animation: "rise 320ms var(--spring)",
-              zIndex: 20,
-            }}
+            className={`snack ${showingResult ? "snack-above-dock" : ""}`}
           >
             {snack}
           </div>
