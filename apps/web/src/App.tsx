@@ -212,7 +212,11 @@ export default function App() {
   );
 
   return (
-    <M3eTheme color="#386A20" variant="tonal-spot" scheme="light" motion="expressive">
+    <M3eTheme color="#0E7490" variant="tonal-spot" scheme="light" motion="expressive">
+      <div className="atmosphere" aria-hidden="true">
+        <div className="aurora-shard a" />
+        <div className="aurora-shard b" />
+      </div>
       <div className="app-shell">
         <div className="toolbar">
           <span className="muted">{apiStatus || "準備中…"}</span>
@@ -225,7 +229,7 @@ export default function App() {
         </div>
 
         {showSettings && (
-          <div className="settings" style={{ marginBottom: "var(--space-lg)" }}>
+          <div className="settings">
             <p className="section-title">設定</p>
             {onPages && (
               <p className="muted">
@@ -324,7 +328,7 @@ export default function App() {
 
         <header className="brand">
           <h1>vision</h1>
-          <p>画像を Stable Diffusion タグへ。端末ローカルで解析します。</p>
+          <p>画像を、澄んだタグへ。端末の中だけで。</p>
         </header>
 
         <div className="stack">
@@ -482,21 +486,7 @@ export default function App() {
         </div>
 
         {snack && (
-          <div
-            role="status"
-            style={{
-              position: "fixed",
-              left: "50%",
-              bottom: 24,
-              transform: "translateX(-50%)",
-              background: "var(--color-inverse-surface)",
-              color: "var(--color-inverse-on-surface)",
-              padding: "12px 20px",
-              borderRadius: "var(--radius-sm)",
-              animation: "rise 320ms var(--spring)",
-              zIndex: 20,
-            }}
-          >
+          <div role="status" className="snack">
             {snack}
           </div>
         )}
