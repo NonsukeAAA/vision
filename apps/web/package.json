@@ -1,0 +1,27 @@
+{
+  "name": "vision-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "lint": "tsc --noEmit --pretty false"
+  },
+  "dependencies": {
+    "@m3e/icons": "^1.0.10",
+    "@m3e/react": "^2.6.2",
+    "@m3e/web": "^2.6.2",
+    "onnxruntime-web": "^1.21.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "~5.7.2",
+    "vite": "^6.0.0"
+  }
+}

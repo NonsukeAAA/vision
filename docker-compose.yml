@@ -1,0 +1,36 @@
+services:
+  api:
+    build:
+      context: ./services/api
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      VISION_HOST: 0.0.0.0
+      VISION_MOCK_INFERENCE: ${VISION_MOCK_INFERENCE:-0}
+      VISION_ENABLE_JOY: ${VISION_ENABLE_JOY:-1}
+      VISION_CORS_ORIGINS: "*"
+    volumes:
+      - vision-models:/root/.cache/vision/models
+    # GPU (optional): uncomment when nvidia-container-toolkit is available
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - capabilities: [gpu]
+
+  web:
+    image: node:22-alpine
+    working_dir: /app
+    volumes:
+      - ./apps/web:/app
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_BASE_PATH: /
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    depends_on:
+      - api
+
+volumes:
+  vision-models:
