@@ -1,7 +1,7 @@
 import * as ort from "onnxruntime-web/wasm";
 import type { TagScore } from "./types";
 
-/** Browser-friendly WD v3 (≈360MB). */
+/** Browser-friendly WD v3 (≈360MB). eva02-large is ≈1.3GB and hangs on mobile. */
 const HF_REPO = "SmilingWolf/wd-vit-tagger-v3";
 const HF_BASE = `https://huggingface.co/${HF_REPO}/resolve/main`;
 const CACHE_NAME = "vision-wd-vit-v3-v1";
@@ -47,9 +47,9 @@ function isAppleMobile(): boolean {
 function configureOrtWasm() {
   if (wasmConfigured) return;
   const ver = ort.env.versions?.web ?? "1.27.0";
-  // MUST match the installed onnxruntime-web JS version (mismatch → _OrtGetInputOutputMetadata errors)
+  // MUST match installed onnxruntime-web JS (mismatch → _OrtGetInputOutputMetadata errors)
   ort.env.wasm.wasmPaths = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ver}/dist/`;
-  // GitHub Pages is not crossOriginIsolated — multi-thread WASM breaks (esp. Safari).
+  // Pages is not crossOriginIsolated — multi-thread WASM breaks on Safari.
   ort.env.wasm.numThreads = 1;
   ort.env.wasm.proxy = false;
   if (isAppleMobile()) {
@@ -198,12 +198,9 @@ async function loadSession(
         message: "ONNX ランタイム初期化中…",
       });
 
-      const tryCreate = async () =>
-        ort.InferenceSession.create(new Uint8Array(modelBuf), {
-          executionProviders: ["wasm"],
-        });
-
-      const session = await tryCreate();
+      const session = await ort.InferenceSession.create(new Uint8Array(modelBuf), {
+        executionProviders: ["wasm"],
+      });
       emit(onProgress, {
         phase: "ready",
         loaded: 1,
@@ -298,6 +295,5 @@ export async function tagInBrowser(
     });
   }
   results.sort((a, b) => b.score - a.score);
-  const prompt = results.map((t) => t.tag).join(", ");
-  return { tags: results, prompt };
+  return { tags: results, prompt: results.map((t) => t.tag).join(", ") };
 }
