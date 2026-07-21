@@ -15,6 +15,7 @@ import { M3eSliderThumb } from "@m3e/react/slider";
 import { M3eTheme } from "@m3e/react/theme";
 import { checkHealth, tagViaApi } from "./api";
 import {
+  isGitHubPagesHost,
   loadSettings,
   saveSettings,
   type AppSettings,
@@ -25,6 +26,11 @@ import {
 import { preloadWdBrowser, tagInBrowser } from "./wdBrowser";
 
 type Screen = "home" | "working" | "result";
+
+async function ensureBrowserReady(): Promise<string> {
+  await preloadWdBrowser();
+  return "ブラウザ内 WD EVA02 準備完了（端末ローカル推論）";
+}
 
 export default function App() {
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
@@ -37,11 +43,12 @@ export default function App() {
   const [prompt, setPrompt] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [apiStatus, setApiStatus] = useState<string>("");
+  const [apiStatus, setApiStatus] = useState<string>("モデル準備中…");
   const [modelReady, setModelReady] = useState(false);
   const [snack, setSnack] = useState<string | null>(null);
   const [, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
+  const onPages = isGitHubPagesHost();
 
   useEffect(() => {
     saveSettings(settings);
@@ -52,10 +59,10 @@ export default function App() {
     (async () => {
       if (settings.engine === "browser") {
         try {
-          await preloadWdBrowser();
+          const msg = await ensureBrowserReady();
           if (!cancelled) {
             setModelReady(true);
-            setApiStatus("ブラウザ内 WD EVA02 準備完了");
+            setApiStatus(msg);
           }
         } catch (err) {
           if (!cancelled) {
@@ -65,16 +72,41 @@ export default function App() {
             );
           }
         }
-      } else {
-        const health = await checkHealth(settings.apiBase);
-        if (!cancelled) {
-          setModelReady(health.ok);
-          setApiStatus(
-            health.ok
-              ? `ローカル API 接続OK${health.mock ? " (mock)" : ""}${health.joy_available ? " · JoyCaption可" : " · JoyCaption未導入"}`
-              : `API 未接続: ${health.detail ?? "error"}`,
-          );
-        }
+        return;
+      }
+
+      const health = await checkHealth(settings.apiBase);
+      if (cancelled) return;
+
+      if (health.ok) {
+        setModelReady(true);
+        setApiStatus(
+          `ローカル API 接続OK${health.mock ? " (mock)" : ""}${health.joy_available ? " · JoyCaption可" : " · JoyCaption未導入"}`,
+        );
+        return;
+      }
+
+      // API 不通時はブラウザ推論へ自動フォールバック（Pages でも解析可能にする）
+      try {
+        const msg = await ensureBrowserReady();
+        if (cancelled) return;
+        setSettings((s) => ({ ...s, engine: "browser" }));
+        setModelReady(true);
+        setApiStatus(
+          `API 未接続のためブラウザ推論に切替 · ${msg}`,
+        );
+        setSnack("ローカル API に接続できないため、ブラウザ内 WD14 に切り替えました");
+      } catch (err) {
+        if (cancelled) return;
+        setModelReady(false);
+        setApiStatus(
+          `API 未接続: ${health.detail ?? "error"} / ブラウザ推論も失敗`,
+        );
+        setError(
+          err instanceof Error
+            ? err.message
+            : "推論エンジンを初期化できませんでした",
+        );
       }
     })();
     return () => {
@@ -189,6 +221,12 @@ export default function App() {
         {showSettings && (
           <div className="settings" style={{ marginBottom: "var(--space-lg)" }}>
             <p className="section-title">設定</p>
+            {onPages && (
+              <p className="muted">
+                GitHub Pages では画像を端末内（ブラウザ）で解析します。JoyCaption
+                併用は PC で API を起動し、下のエンジンを「ローカル API」にしてください。
+              </p>
+            )}
             <label>
               推論エンジン
               <select
@@ -200,21 +238,27 @@ export default function App() {
                   }))
                 }
               >
-                <option value="browser">ブラウザ (WD14 / GitHub Pages向け)</option>
+                <option value="browser">ブラウザ (WD14 · 推奨 / Pages対応)</option>
                 <option value="local-api">ローカル API (JoyCaption + WD14)</option>
               </select>
             </label>
             {settings.engine === "local-api" && (
-              <label>
-                API Base URL
-                <input
-                  type="text"
-                  value={settings.apiBase}
-                  onChange={(e) =>
-                    setSettings((s) => ({ ...s, apiBase: e.target.value }))
-                  }
-                />
-              </label>
+              <>
+                <p className="muted">
+                  事前に <code>./scripts/dev.sh</code> などで API
+                  を起動してください。未起動の場合は自動でブラウザ推論に戻ります。
+                </p>
+                <label>
+                  API Base URL
+                  <input
+                    type="text"
+                    value={settings.apiBase}
+                    onChange={(e) =>
+                      setSettings((s) => ({ ...s, apiBase: e.target.value }))
+                    }
+                  />
+                </label>
+              </>
             )}
             <label>
               一般タグ閾値 ({thresholdPercent}%)
