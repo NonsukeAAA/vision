@@ -212,7 +212,7 @@ export default function App() {
         </div>
 
         {showSettings && (
-          <div className="settings" style={{ marginBottom: "var(--space-lg)" }}>
+          <div className="settings">
             <p className="section-title">設定</p>
             {onPages && (
               <p className="muted">
@@ -474,12 +474,13 @@ export default function App() {
             style={{
               position: "fixed",
               left: "50%",
-              bottom: 24,
+              bottom: 16,
               transform: "translateX(-50%)",
               background: "var(--color-inverse-surface)",
               color: "var(--color-inverse-on-surface)",
-              padding: "12px 20px",
+              padding: "8px 14px",
               borderRadius: "var(--radius-sm)",
+              fontSize: "0.8125rem",
               animation: "rise 320ms var(--spring)",
               zIndex: 20,
             }}
