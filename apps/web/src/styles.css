@@ -162,6 +162,10 @@ select {
   padding: var(--space-md) var(--space-lg) var(--space-xxl);
 }
 
+.app-shell.has-dock {
+  padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+}
+
 .toolbar {
   display: flex;
   justify-content: space-between;
@@ -213,6 +217,14 @@ select {
   font-weight: 400;
   line-height: 1.45;
   color: var(--ink-soft);
+}
+
+.brand-compact {
+  margin-bottom: var(--space-sm);
+}
+
+.brand-compact h1 {
+  font-size: clamp(1.6rem, 5vw, 2rem);
 }
 
 .panel {
@@ -279,12 +291,306 @@ select {
   letter-spacing: -0.02em;
 }
 
+.dropzone.busy {
+  pointer-events: none;
+  opacity: 0.72;
+}
+
 .preview {
   width: 100%;
   max-height: 168px;
   object-fit: contain;
   border-radius: var(--radius-md);
   background: rgba(255, 255, 255, 0.35);
+}
+
+.workbench {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: var(--space-md);
+  align-items: center;
+  padding: var(--space-sm);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.28);
+  border: 1px solid var(--glass-edge);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  animation: rise 420ms var(--spring) both;
+}
+
+.workbench-thumb {
+  width: 72px;
+  height: 72px;
+  padding: 0;
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.4);
+  cursor: pointer;
+}
+
+.workbench-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.workbench-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--teal-deep);
+}
+
+.workbench-meta {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.analyze-row {
+  align-items: center;
+}
+
+.shortcut-hint {
+  margin-left: auto;
+  font-size: 0.7rem;
+  opacity: 0.7;
+}
+
+.check-line {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+  font-size: 0.875rem;
+  color: var(--ink);
+}
+
+/* —— Buttons —— */
+.btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  font-family: var(--font-display);
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition:
+    background-color 200ms var(--ease),
+    color 200ms var(--ease),
+    border-color 200ms var(--ease),
+    transform 200ms var(--spring),
+    opacity 160ms var(--ease);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-sm {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 0.75rem;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--teal) 0%, var(--teal-deep) 100%);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.25) inset;
+}
+
+.btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+}
+
+.btn-primary.is-copied {
+  background: linear-gradient(135deg, #0f766e 0%, #115e59 100%);
+}
+
+.btn-ghost {
+  background: rgba(255, 255, 255, 0.35);
+  color: var(--ink);
+  border-color: var(--glass-edge);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.55);
+}
+
+/* —— Result —— */
+.result {
+  gap: var(--space-md);
+  animation: rise 480ms var(--spring) both;
+}
+
+.result-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.result-sub {
+  margin: 2px 0 0;
+}
+
+.result-note {
+  margin: 0;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.btn-copy-head {
+  flex-shrink: 0;
+  min-width: 7.5rem;
+}
+
+.prompt-shell {
+  position: relative;
+}
+
+.prompt-box {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  padding: var(--space-md);
+  padding-right: 4.5rem;
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--ink);
+  line-height: 1.55;
+  font-size: 0.875rem;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.prompt-box:focus {
+  outline: 2px solid rgba(14, 116, 144, 0.35);
+  outline-offset: 1px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.btn-icon-copy {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  min-width: 3.4rem;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--radius-xs);
+  border: 1px solid rgba(14, 116, 144, 0.25);
+  background: rgba(255, 255, 255, 0.85);
+  color: var(--teal-deep);
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transition:
+    background-color 180ms var(--ease),
+    color 180ms var(--ease),
+    transform 180ms var(--spring);
+}
+
+.btn-icon-copy:hover:not(:disabled) {
+  background: #fff;
+  transform: translateY(-1px);
+}
+
+.btn-icon-copy.is-copied {
+  background: var(--teal);
+  border-color: var(--teal);
+  color: #fff;
+}
+
+.btn-icon-copy:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.tags-block {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.tags-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.tags-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.tag-chip.tag-locked {
+  border-color: rgba(14, 116, 144, 0.35);
+  background: rgba(207, 250, 254, 0.55);
+}
+
+/* —— Sticky action dock —— */
+.action-dock {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: min(640px, 100%);
+  transform: translateX(-50%);
+  padding: 12px var(--space-lg) calc(12px + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(
+    to top,
+    rgba(217, 238, 243, 0.92) 40%,
+    rgba(217, 238, 243, 0.72) 75%,
+    transparent
+  );
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  animation: dock-in 420ms var(--spring) both;
+}
+
+.btn-dock-copy {
+  flex: 1;
+  min-height: 48px;
+  font-size: 0.95rem;
+}
+
+.snack-above-dock {
+  bottom: calc(76px + env(safe-area-inset-bottom, 0px));
 }
 
 .row {
@@ -313,26 +619,6 @@ select {
   color: var(--ink-soft);
   font-size: 0.8125rem;
   line-height: 1.4;
-}
-
-.prompt-box {
-  width: 100%;
-  min-height: 88px;
-  resize: vertical;
-  padding: var(--space-sm) var(--space-md);
-  border: 1px solid var(--glass-edge);
-  border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.45);
-  color: var(--ink);
-  line-height: 1.5;
-  font-size: 0.875rem;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-}
-
-.prompt-box:focus {
-  outline: 2px solid rgba(14, 116, 144, 0.35);
-  outline-offset: 1px;
 }
 
 .chip-wrap {
@@ -434,7 +720,7 @@ select {
   left: 50%;
   bottom: 18px;
   transform: translateX(-50%);
-  z-index: 20;
+  z-index: 40;
   padding: 9px 16px;
   border-radius: var(--radius-sm);
   background: rgba(19, 42, 51, 0.88);
@@ -501,25 +787,62 @@ m3e-button {
   }
 }
 
+@keyframes dock-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
 @media (max-width: 600px) {
   .app-shell {
     padding-inline: var(--space-md);
+  }
+
+  .action-dock {
+    padding-inline: var(--space-md);
+    gap: 6px;
+  }
+
+  .btn-dock-copy {
+    font-size: 0.875rem;
+  }
+
+  .shortcut-hint {
+    display: none;
   }
 
   .brand h1 {
     font-size: clamp(2.25rem, 12vw, 3rem);
   }
 
+  .brand-compact h1 {
+    font-size: clamp(1.5rem, 8vw, 1.85rem);
+  }
+
   .toolbar {
     flex-direction: row;
     align-items: center;
+  }
+
+  .result-head {
+    flex-wrap: wrap;
+  }
+
+  .btn-copy-head {
+    width: 100%;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .atmosphere::before,
   .aurora-shard,
-  .brand h1 {
+  .brand h1,
+  .action-dock {
     animation: none;
   }
 }

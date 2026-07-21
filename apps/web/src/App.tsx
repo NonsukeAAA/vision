@@ -43,9 +43,14 @@ export default function App() {
   const [modelReady, setModelReady] = useState(true);
   const [loadProgress, setLoadProgress] = useState<LoadProgress | null>(null);
   const [snack, setSnack] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const [, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
+  const resultRef = useRef<HTMLElement>(null);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+  const copyResetRef = useRef<number | null>(null);
   const onPages = isGitHubPagesHost();
+  const showingResult = screen === "result" && !!result;
 
   const onWdProgress = (p: LoadProgress) => {
     setLoadProgress(p);
@@ -62,7 +67,6 @@ export default function App() {
       if (settings.engine === "browser") {
         setModelReady(true);
         setApiStatus("ブラウザ推論 · 初回はモデル取得あり（約360MB）");
-        // Background warm-up (does not block the UI)
         void preloadWdBrowser(onWdProgress)
           .then(() => {
             if (!cancelled) {
@@ -110,6 +114,21 @@ export default function App() {
     return () => window.clearTimeout(t);
   }, [snack]);
 
+  useEffect(() => {
+    if (screen !== "result") return;
+    const id = window.requestAnimationFrame(() => {
+      resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      promptRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [screen, result]);
+
+  useEffect(() => {
+    return () => {
+      if (copyResetRef.current) window.clearTimeout(copyResetRef.current);
+    };
+  }, []);
+
   const pickFile = (next: File | null) => {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setFile(next);
@@ -118,7 +137,9 @@ export default function App() {
     setEditableTags([]);
     setPrompt("");
     setError(null);
+    setCopied(false);
     if (next) startTransition(() => setScreen("home"));
+    else setScreen("home");
   };
 
   const onDrop = (e: DragEvent) => {
@@ -148,6 +169,7 @@ export default function App() {
   const runTag = async () => {
     if (!file) return;
     setError(null);
+    setCopied(false);
     setScreen("working");
     try {
       let next: TagResult;
@@ -199,17 +221,58 @@ export default function App() {
     const tags = forceUncensoredTags(editableTags.filter((t) => t.tag !== tag));
     setEditableTags(tags);
     setPrompt(rebuildPrompt(tags, result?.caption ?? null, settings.mode));
+    setCopied(false);
+  };
+
+  const syncPromptFromTags = () => {
+    const next = rebuildPrompt(editableTags, result?.caption ?? null, settings.mode);
+    setPrompt(next);
+    setCopied(false);
+    setSnack("タグからプロンプトを再生成しました");
   };
 
   const copyPrompt = async () => {
-    await navigator.clipboard.writeText(prompt);
-    setSnack("プロンプトをコピーしました");
+    if (!prompt.trim()) return;
+    try {
+      await navigator.clipboard.writeText(prompt);
+      setCopied(true);
+      setSnack("プロンプトをコピーしました");
+      if (copyResetRef.current) window.clearTimeout(copyResetRef.current);
+      copyResetRef.current = window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setSnack("コピーに失敗しました。手動で選択してください");
+      promptRef.current?.select();
+    }
   };
+
+  const runTagRef = useRef(runTag);
+  const copyPromptRef = useRef(copyPrompt);
+  runTagRef.current = runTag;
+  copyPromptRef.current = copyPrompt;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const meta = e.metaKey || e.ctrlKey;
+      if (meta && e.key === "Enter" && file && screen !== "working" && modelReady) {
+        e.preventDefault();
+        void runTagRef.current();
+      }
+      if (meta && e.shiftKey && (e.key === "c" || e.key === "C") && showingResult) {
+        e.preventDefault();
+        void copyPromptRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [file, screen, modelReady, showingResult]);
 
   const thresholdPercent = useMemo(
     () => Math.round(settings.threshold * 100),
     [settings.threshold],
   );
+
+  const tagCount = editableTags.length;
+  const canAnalyze = !!file && screen !== "working" && modelReady;
 
   return (
     <M3eTheme color="#0E7490" variant="tonal-spot" scheme="light" motion="expressive">
@@ -217,13 +280,12 @@ export default function App() {
         <div className="aurora-shard a" />
         <div className="aurora-shard b" />
       </div>
-      <div className="app-shell">
+      <div className={`app-shell ${showingResult ? "has-dock" : ""}`}>
         <div className="toolbar">
-          <span className="muted">{apiStatus || "準備中…"}</span>
-          <M3eButton
-            variant="text"
-            onClick={() => setShowSettings((v) => !v)}
-          >
+          <span className="muted" title={apiStatus}>
+            {apiStatus || "準備中…"}
+          </span>
+          <M3eButton variant="text" onClick={() => setShowSettings((v) => !v)}>
             設定
           </M3eButton>
         </div>
@@ -292,7 +354,7 @@ export default function App() {
               </M3eSlider>
             </label>
             <label>
-              <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <span className="check-line">
                 <input
                   type="checkbox"
                   checked={settings.includeRating}
@@ -308,7 +370,7 @@ export default function App() {
             </label>
             {settings.engine === "local-api" && (
               <label>
-                <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <span className="check-line">
                   <input
                     type="checkbox"
                     checked={settings.enableJoy}
@@ -326,81 +388,138 @@ export default function App() {
           </div>
         )}
 
-        <header className="brand">
+        <header className={`brand ${showingResult ? "brand-compact" : ""}`}>
           <h1>vision</h1>
-          <p>画像を、澄んだタグへ。端末の中だけで。</p>
+          {!showingResult && <p>画像を、澄んだタグへ。端末の中だけで。</p>}
         </header>
 
         <div className="stack">
-          <M3eSegmentedButton>
-            {(
-              [
-                ["booru", "Booru"],
-                ["caption", "Caption"],
-                ["hybrid", "Hybrid"],
-              ] as const
-            ).map(([value, label]) => (
-              <M3eButtonSegment
-                key={value}
-                value={value}
-                checked={settings.mode === value}
-                onChange={() => setSettings((s) => ({ ...s, mode: value }))}
-                onClick={() => setSettings((s) => ({ ...s, mode: value }))}
+          {!showingResult && (
+            <M3eSegmentedButton>
+              {(
+                [
+                  ["booru", "Booru"],
+                  ["caption", "Caption"],
+                  ["hybrid", "Hybrid"],
+                ] as const
+              ).map(([value, label]) => (
+                <M3eButtonSegment
+                  key={value}
+                  value={value}
+                  checked={settings.mode === value}
+                  onChange={() => setSettings((s) => ({ ...s, mode: value }))}
+                  onClick={() => setSettings((s) => ({ ...s, mode: value }))}
+                >
+                  {label}
+                </M3eButtonSegment>
+              ))}
+            </M3eSegmentedButton>
+          )}
+
+          {showingResult && previewUrl ? (
+            <div className="workbench">
+              <button
+                type="button"
+                className="workbench-thumb"
+                onClick={() => inputRef.current?.click()}
+                title="別の画像を選ぶ"
               >
-                {label}
-              </M3eButtonSegment>
-            ))}
-          </M3eSegmentedButton>
+                <img src={previewUrl} alt="選択中の画像" />
+              </button>
+              <div className="workbench-meta">
+                <p className="workbench-title">解析済み</p>
+                <p className="muted">
+                  {settings.mode}
+                  {result?.device ? ` · ${result.device}` : ""}
+                  {result?.source.wd ? ` · ${result.source.wd}` : ""}
+                </p>
+                <div className="row">
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    disabled={!canAnalyze}
+                    onClick={() => void runTag()}
+                  >
+                    再解析
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => inputRef.current?.click()}
+                  >
+                    画像を変更
+                  </button>
+                </div>
+              </div>
+              <input
+                ref={inputRef}
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
+              />
+            </div>
+          ) : (
+            <>
+              <div
+                className={`dropzone ${dragging ? "dragging" : ""} ${screen === "working" ? "busy" : ""}`}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") inputRef.current?.click();
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragging(true);
+                }}
+                onDragLeave={() => setDragging(false)}
+                onDrop={onDrop}
+                onClick={() => inputRef.current?.click()}
+              >
+                {previewUrl ? (
+                  <img className="preview" src={previewUrl} alt="選択中の画像" />
+                ) : (
+                  <>
+                    <strong>画像をドロップ</strong>
+                    <span className="muted">
+                      またはクリック · PNG / JPEG / WebP
+                    </span>
+                  </>
+                )}
+                <input
+                  ref={inputRef}
+                  type="file"
+                  accept="image/*"
+                  hidden
+                  onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
+                />
+              </div>
 
-          <div
-            className={`dropzone ${dragging ? "dragging" : ""}`}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") inputRef.current?.click();
-            }}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={onDrop}
-            onClick={() => inputRef.current?.click()}
-          >
-            {previewUrl ? (
-              <img className="preview" src={previewUrl} alt="選択中の画像" />
-            ) : (
-              <>
-                <strong>画像をドロップ</strong>
-                <span className="muted">またはクリックして選択 · PNG / JPEG / WebP</span>
-              </>
-            )}
-            <input
-              ref={inputRef}
-              type="file"
-              accept="image/*"
-              hidden
-              onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
-            />
-          </div>
-
-          <div className="row">
-            <M3eButton
-              variant="filled"
-              disabled={!file || screen === "working" || !modelReady}
-              onClick={() => void runTag()}
-            >
-              解析する
-            </M3eButton>
-            {file && (
-              <M3eButton variant="text" onClick={() => pickFile(null)}>
-                クリア
-              </M3eButton>
-            )}
-          </div>
+              <div className="row analyze-row">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={!canAnalyze}
+                  onClick={() => void runTag()}
+                >
+                  {screen === "working" ? "解析中…" : "解析する"}
+                </button>
+                {file && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => pickFile(null)}
+                  >
+                    クリア
+                  </button>
+                )}
+                <span className="muted shortcut-hint">⌘/Ctrl + Enter</span>
+              </div>
+            </>
+          )}
 
           {screen === "working" && (
-            <div className="status-line panel">
+            <div className="status-line panel" role="status" aria-live="polite">
               <M3eLoadingIndicator />
               <span>
                 {loadProgress?.message ||
@@ -432,61 +551,135 @@ export default function App() {
               </div>
             )}
 
-          {error && <div className="error">{error}</div>}
+          {error && (
+            <div className="error" role="alert">
+              {error}
+            </div>
+          )}
 
-          {screen === "result" && result && (
-            <section className="panel stack">
-              <h2 className="section-title">結果</h2>
-              <p className="muted">
-                device: {result.device}
-                {result.source.wd ? ` · wd: ${result.source.wd}` : ""}
-                {result.source.joy ? ` · joy: ${result.source.joy}` : ""}
-              </p>
-              {result.source.note && <p className="muted">{result.source.note}</p>}
-
-              {editableTags.length > 0 && (
-                <div className="chip-wrap">
-                  {editableTags.map((t) => (
-                    <button
-                      key={t.tag}
-                      type="button"
-                      className="tag-chip"
-                      onClick={() => removeTag(t.tag)}
-                      title="クリックで削除"
-                    >
-                      {t.tag}
-                      <span className="score">{t.score.toFixed(2)}</span>
-                    </button>
-                  ))}
+          {showingResult && result && (
+            <section className="result panel stack" ref={resultRef}>
+              <div className="result-head">
+                <div>
+                  <h2 className="section-title">プロンプト</h2>
+                  <p className="muted result-sub">
+                    {tagCount > 0 ? `${tagCount} tags` : "編集してコピー"}
+                    {result.source.joy ? ` · joy` : ""}
+                  </p>
                 </div>
+                <button
+                  type="button"
+                  className={`btn btn-primary btn-copy-head ${copied ? "is-copied" : ""}`}
+                  onClick={() => void copyPrompt()}
+                  disabled={!prompt.trim()}
+                >
+                  {copied ? "コピー済み" : "コピー"}
+                </button>
+              </div>
+
+              {result.source.note && (
+                <p className="muted result-note">{result.source.note}</p>
               )}
 
-              <textarea
-                className="prompt-box"
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                aria-label="生成プロンプト"
-              />
-
-              <div className="row">
-                <M3eButton variant="filled" onClick={() => void copyPrompt()}>
-                  コピー
-                </M3eButton>
-                <M3eButton
-                  variant="tonal"
-                  onClick={() => {
-                    setScreen("home");
+              <div className="prompt-shell">
+                <textarea
+                  ref={promptRef}
+                  className="prompt-box"
+                  value={prompt}
+                  onChange={(e) => {
+                    setPrompt(e.target.value);
+                    setCopied(false);
                   }}
+                  aria-label="生成プロンプト"
+                  rows={5}
+                />
+                <button
+                  type="button"
+                  className={`btn-icon-copy ${copied ? "is-copied" : ""}`}
+                  onClick={() => void copyPrompt()}
+                  disabled={!prompt.trim()}
+                  aria-label={copied ? "コピー済み" : "プロンプトをコピー"}
+                  title="コピー (⌘⇧C)"
                 >
-                  戻る
-                </M3eButton>
+                  {copied ? "済" : "Copy"}
+                </button>
               </div>
+
+              {editableTags.length > 0 && (
+                <div className="tags-block">
+                  <div className="tags-head">
+                    <h3 className="tags-title">タグ</h3>
+                    <div className="row">
+                      <span className="muted">タップで除外</span>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={syncPromptFromTags}
+                      >
+                        タグから再生成
+                      </button>
+                    </div>
+                  </div>
+                  <div className="chip-wrap">
+                    {editableTags.map((t) => (
+                      <button
+                        key={t.tag}
+                        type="button"
+                        className={`tag-chip ${t.tag === "uncensored" ? "tag-locked" : ""}`}
+                        onClick={() => removeTag(t.tag)}
+                        title={
+                          t.tag === "uncensored"
+                            ? "uncensored は常に付与されます"
+                            : "クリックで削除"
+                        }
+                      >
+                        {t.tag}
+                        <span className="score">{t.score.toFixed(2)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </section>
           )}
         </div>
 
+        {showingResult && (
+          <div className="action-dock" role="region" aria-label="結果操作">
+            <button
+              type="button"
+              className={`btn btn-primary btn-dock-copy ${copied ? "is-copied" : ""}`}
+              onClick={() => void copyPrompt()}
+              disabled={!prompt.trim()}
+            >
+              {copied ? "コピーしました" : "プロンプトをコピー"}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={!canAnalyze}
+              onClick={() => void runTag()}
+            >
+              再解析
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => {
+                setScreen("home");
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+            >
+              戻る
+            </button>
+          </div>
+        )}
+
         {snack && (
-          <div role="status" className="snack">
+          <div
+            role="status"
+            className={`snack ${showingResult ? "snack-above-dock" : ""}`}
+          >
             {snack}
           </div>
         )}
