@@ -81,7 +81,8 @@ export const BROWSER_MODELS: Record<BrowserModelId, BrowserModelInfo> = {
     hfRepo: "deepghs/pixai-tagger-v0.9-onnx",
     modelUrl: "models/pixai-v09-fp16.json",
     sizeMb: 607,
-    mobileFriendly: false,
+    // Heavy (~607MB + WASM); may OOM on low-RAM devices, but keep selectable.
+    mobileFriendly: true,
     qualityRank: 4,
   },
 };
