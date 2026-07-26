@@ -27,8 +27,8 @@ import {
   type TagScore,
 } from "./types";
 import {
-  preloadBrowserModels,
-  preloadWdBrowser,
+  formatModelLoadError,
+  preloadBrowserTags,
   tagEnsembleInBrowser,
   tagInBrowser,
   type LoadProgress,
@@ -78,7 +78,7 @@ export default function App() {
   }, [settings]);
 
   useEffect(() => {
-    let cancelled = false;
+    const ac = new AbortController();
     (async () => {
       if (settings.engine === "browser") {
         setModelReady(true);
@@ -90,32 +90,30 @@ export default function App() {
           settings.tagRunMode === "merge"
             ? runModels.reduce((s, id) => s + BROWSER_MODELS[id].sizeMb, 0)
             : activeModel.sizeMb;
-        setApiStatus(`ブラウザ推論 · ${label}（初回合計約${sizeHint}MB）`);
-        const warm =
-          settings.tagRunMode === "merge"
-            ? preloadBrowserModels(runModels, onWdProgress)
-            : preloadWdBrowser(settings.browserModel, onWdProgress);
-        void warm
+        // Do NOT auto-download 360MB–1.2GB ONNX on open — that OOMs / aborts on mobile
+        // when the user toggles models. Warm only the small tags CSV; ONNX loads on 解析.
+        setApiStatus(
+          `ブラウザ推論 · ${label}（解析時に約${sizeHint}MB取得）`,
+        );
+        void preloadBrowserTags(runModels, onWdProgress, ac.signal)
           .then(() => {
-            if (!cancelled) {
-              setApiStatus(`${label} 準備完了（端末ローカル）`);
+            if (!ac.signal.aborted) {
+              setApiStatus(
+                `${label} · 解析時にモデル取得（約${sizeHint}MB・初回のみ）`,
+              );
               setLoadProgress(null);
             }
           })
           .catch((err) => {
-            if (!cancelled) {
-              setApiStatus(
-                err instanceof Error
-                  ? `モデル取得待ち: ${err.message}`
-                  : "モデル取得に失敗（解析時に再試行）",
-              );
-            }
+            if (ac.signal.aborted) return;
+            if (err instanceof DOMException && err.name === "AbortError") return;
+            setApiStatus(`タグ辞書: ${formatModelLoadError(err)}`);
           });
         return;
       }
 
       const health = await checkHealth(settings.apiBase);
-      if (cancelled) return;
+      if (ac.signal.aborted) return;
 
       if (health.ok) {
         setModelReady(true);
@@ -129,12 +127,9 @@ export default function App() {
       setModelReady(true);
       setApiStatus(`API 未接続のためブラウザ推論に切替`);
       setSnack("ローカル API に接続できないため、ブラウザ内推論に切り替えました");
-      void preloadWdBrowser(settings.browserModel, onWdProgress).catch(
-        () => undefined,
-      );
     })();
     return () => {
-      cancelled = true;
+      ac.abort();
     };
   }, [
     settings.engine,
@@ -281,7 +276,7 @@ export default function App() {
       setResult({ ...next, tags: forcedTags, prompt: nextPrompt });
       setScreen("result");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "解析に失敗しました");
+      setError(formatModelLoadError(err) || "解析に失敗しました");
       setScreen("home");
     }
   };

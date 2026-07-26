@@ -14,7 +14,9 @@ import {
 } from "./mergeTags";
 
 const TARGET = 448;
-const CACHE_PREFIX = "vision-tagger-v1";
+const CACHE_PREFIX = "vision-tagger-v2";
+/** Skip Cache API for large ONNX on all devices — Response() copies and OOMs easily. */
+const MAX_CACHE_BYTES = 8 * 1024 * 1024;
 
 type TagRow = { name: string; category: number };
 export type LoadProgress = {
@@ -72,6 +74,23 @@ export function clearBrowserModelRuntime(id?: BrowserModelId) {
   runtimes.clear();
 }
 
+export function formatModelLoadError(err: unknown): string {
+  if (err instanceof DOMException && err.name === "AbortError") {
+    return "ダウンロードを中断しました";
+  }
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/Failed to fetch|NetworkError|Load failed|network/i.test(msg)) {
+    return "モデル取得に失敗しました（通信エラー）。Wi‑Fi で再試行してください";
+  }
+  if (/QuotaExceeded|sqlite|cache/i.test(msg)) {
+    return "端末ストレージ不足です。サイトデータを削除して再試行してください";
+  }
+  if (/out of memory|Array buffer|allocation/i.test(msg)) {
+    return "メモリ不足です。他アプリを閉じて単体モデルで再試行してください";
+  }
+  return msg || "モデル読み込みに失敗しました";
+}
+
 function cacheName(id: BrowserModelId): string {
   return `${CACHE_PREFIX}-${id}`;
 }
@@ -84,6 +103,8 @@ function configureOrtWasm() {
   // Pages is not crossOriginIsolated — multi-thread WASM breaks on Safari.
   ort.env.wasm.numThreads = 1;
   ort.env.wasm.proxy = false;
+  // ORT 1.27 only ships simd-threaded.wasm. Setting false skips the feature probe
+  // (Safari sometimes reports no SIMD incorrectly) without changing the binary name.
   if (isAppleMobileUa()) {
     ort.env.wasm.simd = false;
   }
@@ -123,26 +144,45 @@ async function cacheMatch(
   }
 }
 
-async function cachePut(
+async function cachePutBytes(
   id: BrowserModelId,
   url: string,
-  res: Response,
+  data: Uint8Array,
+  contentType: string,
 ): Promise<void> {
+  if (data.byteLength > MAX_CACHE_BYTES) return;
+  if (isAppleMobileUa()) return;
   try {
     const cache = await caches.open(cacheName(id));
-    await cache.put(url, res);
+    // Copy once into a detached ArrayBuffer owned by the Response.
+    const copy = data.slice().buffer;
+    await cache.put(
+      url,
+      new Response(copy, { headers: { "Content-Type": contentType } }),
+    );
   } catch {
     // Quota / private mode — ignore
   }
 }
 
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) {
+    throw new DOMException("Aborted", "AbortError");
+  }
+}
+
+/**
+ * Stream download into a single buffer (no chunk[] + merge double memory).
+ */
 async function fetchWithProgress(
   id: BrowserModelId,
   url: string,
   onProgress: ProgressFn | undefined,
   label: string,
-): Promise<ArrayBuffer> {
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
   const cached = await cacheMatch(id, url);
+  throwIfAborted(signal);
   if (cached) {
     emit(onProgress, {
       phase: "model",
@@ -151,59 +191,89 @@ async function fetchWithProgress(
       message: `${label}（キャッシュ）`,
       modelId: id,
     });
-    return cached.arrayBuffer();
+    return new Uint8Array(await cached.arrayBuffer());
   }
 
-  const res = await fetch(url);
+  const res = await fetch(url, { signal });
   if (!res.ok) throw new Error(`${label}の取得に失敗 (${res.status})`);
 
   const total = Number(res.headers.get("content-length") || 0);
   if (!res.body) {
-    const buf = await res.arrayBuffer();
-    await cachePut(id, url, new Response(buf.slice(0)));
+    const buf = new Uint8Array(await res.arrayBuffer());
+    void cachePutBytes(id, url, buf, "application/octet-stream");
     return buf;
   }
 
   const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let loaded = 0;
+
+  if (total > 0) {
+    let merged: Uint8Array;
+    try {
+      merged = new Uint8Array(total);
+    } catch {
+      throw new Error(
+        `メモリ不足で ${label}（約${(total / 1e6).toFixed(0)}MB）を確保できません`,
+      );
+    }
+    let offset = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (offset + value.byteLength > total) {
+        throw new Error(`${label} のサイズが予期より大きいです`);
+      }
+      merged.set(value, offset);
+      offset += value.byteLength;
+      emit(onProgress, {
+        phase: "model",
+        loaded: offset,
+        total,
+        message: `${label} ${Math.min(99, Math.round((offset / total) * 100))}%`,
+        modelId: id,
+      });
+    }
+    if (offset < total) {
+      // Truncated stream — use what we got only if substantially complete
+      throw new Error(
+        `${label} のダウンロードが途中で切れました（${(offset / 1e6).toFixed(1)}/${(total / 1e6).toFixed(1)} MB）`,
+      );
+    }
+    void cachePutBytes(id, url, merged, "application/octet-stream");
+    return merged;
+  }
+
+  // Unknown length: grow geometrically (still better than keeping every chunk forever)
+  let capacity = 1024 * 1024;
+  let merged = new Uint8Array(capacity);
+  let offset = 0;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    chunks.push(value);
-    loaded += value.byteLength;
+    if (offset + value.byteLength > capacity) {
+      capacity = Math.max(capacity * 2, offset + value.byteLength);
+      const next = new Uint8Array(capacity);
+      next.set(merged.subarray(0, offset));
+      merged = next;
+    }
+    merged.set(value, offset);
+    offset += value.byteLength;
     emit(onProgress, {
       phase: "model",
-      loaded,
-      total: total || loaded,
-      message:
-        total > 0
-          ? `${label} ${Math.min(99, Math.round((loaded / total) * 100))}%`
-          : `${label} ${(loaded / 1e6).toFixed(1)} MB`,
+      loaded: offset,
+      total: offset,
+      message: `${label} ${(offset / 1e6).toFixed(1)} MB`,
       modelId: id,
     });
   }
-
-  const merged = new Uint8Array(loaded);
-  let offset = 0;
-  for (const c of chunks) {
-    merged.set(c, offset);
-    offset += c.byteLength;
-  }
-  const buf = merged.buffer;
-  await cachePut(
-    id,
-    url,
-    new Response(buf.slice(0), {
-      headers: { "Content-Type": "application/octet-stream" },
-    }),
-  );
-  return buf;
+  const exact = merged.subarray(0, offset);
+  void cachePutBytes(id, url, exact, "application/octet-stream");
+  return exact;
 }
 
 async function loadTags(
   modelId: BrowserModelId,
   onProgress?: ProgressFn,
+  signal?: AbortSignal,
 ): Promise<TagRow[]> {
   const rt = getRuntime(modelId);
   if (!rt.tagsPromise) {
@@ -218,17 +288,15 @@ async function loadTags(
       });
       let text: string;
       const cached = await cacheMatch(modelId, tagsUrl);
+      throwIfAborted(signal);
       if (cached) {
         text = await cached.text();
       } else {
-        const res = await fetch(tagsUrl);
+        const res = await fetch(tagsUrl, { signal });
         if (!res.ok) throw new Error("タグ辞書の取得に失敗しました");
         text = await res.text();
-        await cachePut(
-          modelId,
-          tagsUrl,
-          new Response(text, { headers: { "Content-Type": "text/csv" } }),
-        );
+        const encoded = new TextEncoder().encode(text);
+        void cachePutBytes(modelId, tagsUrl, encoded, "text/csv");
       }
       const lines = text.trim().split(/\r?\n/);
       const header = parseCsvLine(lines[0]);
@@ -246,12 +314,16 @@ async function loadTags(
       throw err;
     });
   }
-  return rt.tagsPromise;
+
+  const tags = await rt.tagsPromise;
+  throwIfAborted(signal);
+  return tags;
 }
 
 async function loadSession(
   modelId: BrowserModelId,
   onProgress?: ProgressFn,
+  signal?: AbortSignal,
 ): Promise<ort.InferenceSession> {
   const rt = getRuntime(modelId);
   if (!rt.sessionPromise) {
@@ -266,11 +338,12 @@ async function loadSession(
         message: `${info.shortLabel} をダウンロード中（初回のみ・約${info.sizeMb}MB）…`,
         modelId,
       });
-      const modelBuf = await fetchWithProgress(
+      const modelBytes = await fetchWithProgress(
         modelId,
         modelUrl,
         onProgress,
         info.shortLabel,
+        signal,
       );
       emit(onProgress, {
         phase: "init",
@@ -280,7 +353,8 @@ async function loadSession(
         modelId,
       });
 
-      const session = await ort.InferenceSession.create(new Uint8Array(modelBuf), {
+      // Pass Uint8Array directly — avoid an extra full copy.
+      const session = await ort.InferenceSession.create(modelBytes, {
         executionProviders: ["wasm"],
       });
       emit(onProgress, {
@@ -297,13 +371,16 @@ async function loadSession(
         phase: "error",
         loaded: 0,
         total: 0,
-        message: err instanceof Error ? err.message : "モデル読み込み失敗",
+        message: formatModelLoadError(err),
         modelId,
       });
       throw err;
     });
   }
-  return rt.sessionPromise;
+
+  const session = await rt.sessionPromise;
+  throwIfAborted(signal);
+  return session;
 }
 
 /** WD v3: white-pad square, BGR NHWC 0–255 float */
@@ -372,13 +449,15 @@ async function runOneModel(
     includeRating: boolean;
   },
   onProgress?: ProgressFn,
+  signal?: AbortSignal,
 ): Promise<TaggedByModel> {
   activeModelId = modelId;
   const family = BROWSER_MODELS[modelId].family;
   const [session, tags] = await Promise.all([
-    loadSession(modelId, onProgress),
-    loadTags(modelId, onProgress),
+    loadSession(modelId, onProgress, signal),
+    loadTags(modelId, onProgress, signal),
   ]);
+  throwIfAborted(signal);
   const input =
     family === "pixai"
       ? await imageToPixaiTensor(file)
@@ -416,21 +495,36 @@ async function runOneModel(
   return { modelId, tags: results };
 }
 
+/** Warm tags CSV only (small). Full ONNX waits until analyze / explicit preload. */
+export async function preloadBrowserTags(
+  modelIds: BrowserModelId[],
+  onProgress?: ProgressFn,
+  signal?: AbortSignal,
+): Promise<void> {
+  for (const id of modelIds) {
+    throwIfAborted(signal);
+    await loadTags(id, onProgress, signal);
+  }
+}
+
 export async function preloadWdBrowser(
   modelId: BrowserModelId,
   onProgress?: ProgressFn,
+  signal?: AbortSignal,
 ): Promise<void> {
   activeModelId = modelId;
-  await loadTags(modelId, onProgress);
-  await loadSession(modelId, onProgress);
+  await loadTags(modelId, onProgress, signal);
+  await loadSession(modelId, onProgress, signal);
 }
 
 export async function preloadBrowserModels(
   modelIds: BrowserModelId[],
   onProgress?: ProgressFn,
+  signal?: AbortSignal,
 ): Promise<void> {
   for (const id of modelIds) {
-    await preloadWdBrowser(id, onProgress);
+    throwIfAborted(signal);
+    await preloadWdBrowser(id, onProgress, signal);
   }
 }
 
@@ -443,8 +537,9 @@ export async function tagInBrowser(
     includeRating: boolean;
   },
   onProgress?: ProgressFn,
+  signal?: AbortSignal,
 ): Promise<{ tags: TagScore[]; prompt: string; modelId: BrowserModelId }> {
-  const one = await runOneModel(file, opts.modelId, opts, onProgress);
+  const one = await runOneModel(file, opts.modelId, opts, onProgress, signal);
   const forced = forceUncensoredTags(one.tags);
   return {
     tags: forced,
@@ -463,6 +558,7 @@ export async function tagEnsembleInBrowser(
     includeRating: boolean;
   },
   onProgress?: ProgressFn,
+  signal?: AbortSignal,
 ): Promise<{
   tags: TagScore[];
   prompt: string;
@@ -478,6 +574,7 @@ export async function tagEnsembleInBrowser(
       file,
       { ...opts, modelId: ids[0] },
       onProgress,
+      signal,
     );
     return {
       tags: single.tags,
@@ -490,6 +587,7 @@ export async function tagEnsembleInBrowser(
   const parts: TaggedByModel[] = [];
   for (let i = 0; i < ids.length; i++) {
     const id = ids[i];
+    throwIfAborted(signal);
     emit(onProgress, {
       phase: "model",
       loaded: i,
@@ -497,7 +595,7 @@ export async function tagEnsembleInBrowser(
       message: `結合推論 ${i + 1}/${ids.length}: ${BROWSER_MODELS[id].shortLabel}`,
       modelId: id,
     });
-    parts.push(await runOneModel(file, id, opts, onProgress));
+    parts.push(await runOneModel(file, id, opts, onProgress, signal));
   }
 
   const merged = mergeTagScores(parts);
@@ -505,7 +603,6 @@ export async function tagEnsembleInBrowser(
   const voteMap = Object.fromEntries(
     merged.map((t) => [t.tag.replaceAll("_", " "), t.votes]),
   );
-  // Remap votes onto forced list keys
   const votes: Record<string, number> = {};
   for (const t of forced) {
     votes[t.tag] = voteMap[t.tag] ?? voteMap[t.tag.replaceAll(" ", "_")] ?? 1;
