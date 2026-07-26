@@ -5,6 +5,7 @@ from app.force_uncensored import (
     force_uncensored_prompt,
     force_uncensored_tags,
     is_censor_related_tag,
+    is_layout_noise_tag,
     is_mono_comic_style_tag,
 )
 from app.schemas import TagScore
@@ -74,6 +75,31 @@ def test_is_mono_comic() -> None:
     assert is_mono_comic_style_tag("comic")
     assert is_mono_comic_style_tag("speech_bubble")
     assert not is_mono_comic_style_tag("1girl")
+
+
+def test_strips_layout_noise_tags() -> None:
+    tags = [
+        TagScore(tag="1girl", score=0.9, category="general"),
+        TagScore(tag="v", score=0.8, category="general"),
+        TagScore(tag="multiple_views", score=0.7, category="general"),
+        TagScore(tag="v-neck", score=0.6, category="general"),
+        TagScore(tag="smile", score=0.5, category="general"),
+    ]
+    names = [t.tag for t in force_uncensored_tags(tags)]
+    assert "v" not in names
+    assert "multiple_views" not in names
+    # only the bare pose tag goes — compounds that describe the picture stay
+    assert "v-neck" in names
+    assert "1girl" in names
+    assert "smile" in names
+
+
+def test_is_layout_noise() -> None:
+    assert is_layout_noise_tag("v")
+    assert is_layout_noise_tag("multiple_views")
+    assert is_layout_noise_tag("Double V")
+    assert not is_layout_noise_tag("v-neck")
+    assert not is_layout_noise_tag("victory pose")
 
 
 def test_force_prompt() -> None:

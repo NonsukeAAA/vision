@@ -43,9 +43,18 @@ export type AppSettings = {
   includeRating: boolean;
   enableJoy: boolean;
   enableWd: boolean;
+  /** Extra tags to strip from results, on top of the built-in rules. */
+  dropTags: string[];
 };
 
-const STORAGE_KEY = "vision.settings.v4";
+const STORAGE_KEY = "vision.settings.v5";
+const LEGACY_STORAGE_KEYS = [
+  "vision.settings.v4",
+  "vision.settings.v3",
+  "vision.settings.v2",
+];
+/** Guard against a pathological list slowing every tag filter. */
+const MAX_DROP_TAGS = 300;
 
 export function isGitHubPagesHost(): boolean {
   if (typeof window === "undefined") return false;
@@ -64,16 +73,30 @@ export const defaultSettings = (): AppSettings => ({
   includeRating: false,
   enableJoy: true,
   enableWd: true,
+  dropTags: [],
 });
+
+/** Trim, lowercase, de-duplicate and cap a user-entered drop list. */
+export function sanitizeDropTags(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "string") continue;
+    const tag = entry.trim().toLowerCase().replaceAll("_", " ").replace(/\s+/g, " ");
+    if (tag) seen.add(tag);
+    if (seen.size >= MAX_DROP_TAGS) break;
+  }
+  return [...seen];
+}
 
 export function loadSettings(): AppSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    const legacy =
-      !raw && typeof localStorage !== "undefined"
-        ? localStorage.getItem("vision.settings.v3") ||
-          localStorage.getItem("vision.settings.v2")
-        : null;
+    const legacy = raw
+      ? null
+      : LEGACY_STORAGE_KEYS.map((key) => localStorage.getItem(key)).find(
+          (v) => !!v,
+        ) ?? null;
     const parsed = raw
       ? JSON.parse(raw)
       : legacy
@@ -90,6 +113,7 @@ export function loadSettings(): AppSettings {
     merged.tagRunMode =
       merged.tagRunMode === "merge" ? "merge" : "single";
     merged.ensembleModels = sanitizeEnsembleModels(merged.ensembleModels);
+    merged.dropTags = sanitizeDropTags(merged.dropTags);
     if (isGitHubPagesHost() && merged.engine === "local-api") {
       return { ...merged, engine: "browser" };
     }

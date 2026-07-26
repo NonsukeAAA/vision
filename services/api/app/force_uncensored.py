@@ -46,6 +46,16 @@ _MONO_COMIC_EXACT = frozenset(
 )
 
 
+_LAYOUT_NOISE_EXACT = frozenset(
+    {
+        "v",
+        "double v",
+        "multiple views",
+        "multiple girls same face",
+    }
+)
+
+
 def normalize_tag(tag: str) -> str:
     return re.sub(r"\s+", " ", tag.strip().lower().replace("_", " "))
 
@@ -85,8 +95,17 @@ def is_mono_comic_style_tag(tag: str) -> bool:
     return False
 
 
+def is_layout_noise_tag(tag: str) -> bool:
+    """Sheet layout / stock pose tags that only steer generations off-reference."""
+    return normalize_tag(tag) in _LAYOUT_NOISE_EXACT
+
+
 def should_drop_output_tag(tag: str) -> bool:
-    return is_censor_related_tag(tag) or is_mono_comic_style_tag(tag)
+    return (
+        is_censor_related_tag(tag)
+        or is_mono_comic_style_tag(tag)
+        or is_layout_noise_tag(tag)
+    )
 
 
 def force_uncensored_tags(tags: list[TagScore]) -> list[TagScore]:
@@ -109,7 +128,7 @@ def force_uncensored_prompt(prompt: str) -> str:
 _CAPTION_NOISE_RE = re.compile(
     r"\b(mosaic|censor(?:ed|ing| bar)?|bar censor|pixelated|"
     r"monochrome|grayscale|greyscale|comic|manga|4koma|lineart|sketch|"
-    r"speech bubble|screentone|halftone)\b",
+    r"speech bubble|screentone|halftone|multiple views)\b",
     re.IGNORECASE,
 )
 

@@ -28,8 +28,9 @@ import {
   tagInBrowser,
   type LoadProgress,
 } from "./wdBrowser";
-import { forceUncensoredTags } from "./forceUncensored";
+import { forceUncensoredTags, setCustomDropTags } from "./forceUncensored";
 import { SettingsPanel } from "./SettingsPanel";
+import { DropTagsDialog } from "./DropTagsDialog";
 
 type Screen = "home" | "working" | "result";
 
@@ -44,6 +45,7 @@ export default function App() {
   const [prompt, setPrompt] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showDropTags, setShowDropTags] = useState(false);
   const [apiStatus, setApiStatus] = useState<string>("準備完了 · 解析時にモデルを取得します");
   const [modelReady, setModelReady] = useState(true);
   const [loadProgress, setLoadProgress] = useState<LoadProgress | null>(null);
@@ -70,6 +72,7 @@ export default function App() {
   useEffect(() => {
     saveSettings(settings);
   }, [settings]);
+
 
   // Only free other models when the active selection changes — never on every render.
   useEffect(() => {
@@ -192,7 +195,7 @@ export default function App() {
       if (!base.trim()) return "uncensored";
       const cleaned = base
         .replace(
-          /\b(mosaic|censor(?:ed|ing| bar)?|bar censor|pixelated|monochrome|grayscale|greyscale|comic|manga|4koma|lineart|sketch|speech bubble|screentone|halftone)\b/gi,
+          /\b(mosaic|censor(?:ed|ing| bar)?|bar censor|pixelated|monochrome|grayscale|greyscale|comic|manga|4koma|lineart|sketch|speech bubble|screentone|halftone|multiple views)\b/gi,
           "",
         )
         .replace(/\s{2,}/g, " ")
@@ -203,6 +206,16 @@ export default function App() {
     if (mode === "hybrid" && caption) return `${caption}\n\n${tagPart}`;
     return tagPart;
   };
+
+  // The drop list lives in a module-level registry because the ONNX layer filters too.
+  useEffect(() => {
+    setCustomDropTags(settings.dropTags);
+    if (editableTags.length === 0) return;
+    const next = forceUncensoredTags(editableTags);
+    setEditableTags(next);
+    setPrompt(rebuildPrompt(next, result?.caption ?? null, settings.mode));
+    setCopied(false);
+  }, [settings.dropTags]);
 
   const runTag = async () => {
     if (!file) return;
@@ -350,20 +363,27 @@ export default function App() {
           <button
             type="button"
             className="toolbar-gear"
-            onClick={() => setShowSettings((v) => !v)}
+            onClick={() => setShowSettings(true)}
           >
-            {showSettings ? "閉じる" : "設定"}
+            設定
           </button>
         </div>
 
-        {showSettings && (
-          <SettingsPanel
-            settings={settings}
-            onChange={setSettings}
-            onClose={() => setShowSettings(false)}
-            onSnack={setSnack}
-          />
-        )}
+        <SettingsPanel
+          open={showSettings}
+          settings={settings}
+          onChange={setSettings}
+          onClose={() => setShowSettings(false)}
+          onEditDropTags={() => setShowDropTags(true)}
+          onSnack={setSnack}
+        />
+
+        <DropTagsDialog
+          open={showDropTags}
+          tags={settings.dropTags}
+          onChange={(dropTags) => setSettings((s) => ({ ...s, dropTags }))}
+          onClose={() => setShowDropTags(false)}
+        />
 
         <header className={`brand ${showingResult ? "brand-compact" : ""}`}>
           <h1>vision</h1>

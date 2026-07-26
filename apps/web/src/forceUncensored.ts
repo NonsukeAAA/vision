@@ -93,9 +93,53 @@ export function isMonoComicStyleTag(tag: string): boolean {
   return false;
 }
 
+/**
+ * Tags that describe the sheet layout or a stock pose rather than the picture,
+ * so they only steer generations away from the reference.
+ */
+const LAYOUT_NOISE_EXACT = new Set([
+  "v",
+  "double v",
+  "multiple views",
+  "multiple girls same face",
+]);
+
+export function isLayoutNoiseTag(tag: string): boolean {
+  return LAYOUT_NOISE_EXACT.has(normalizeTag(tag));
+}
+
+/**
+ * User-managed drop list, edited in settings.
+ *
+ * Module-level because filtering also runs inside the ONNX layer, which has no
+ * access to app state; {@link setCustomDropTags} is called whenever settings change.
+ */
+const customDropTags = new Set<string>();
+
+export function setCustomDropTags(tags: Iterable<string>): void {
+  customDropTags.clear();
+  for (const tag of tags) {
+    const n = normalizeTag(tag);
+    if (n) customDropTags.add(n);
+  }
+}
+
+export function getCustomDropTags(): string[] {
+  return [...customDropTags];
+}
+
+export function isCustomDropTag(tag: string): boolean {
+  return customDropTags.has(normalizeTag(tag));
+}
+
 /** Tags removed from model output before showing / prompting. */
 export function shouldDropOutputTag(tag: string): boolean {
-  return isCensorRelatedTag(tag) || isMonoComicStyleTag(tag);
+  return (
+    isCensorRelatedTag(tag) ||
+    isMonoComicStyleTag(tag) ||
+    isLayoutNoiseTag(tag) ||
+    isCustomDropTag(tag)
+  );
 }
 
 /**

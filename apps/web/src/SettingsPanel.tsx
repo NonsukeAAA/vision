@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { M3eButton } from "@m3e/react/button";
+import { M3eDialog } from "@m3e/react/dialog";
 import { M3eDivider } from "@m3e/react/divider";
 import { M3eIcon } from "@m3e/react/icon";
-import { M3eIconButton } from "@m3e/react/icon-button";
 import { M3eList } from "@m3e/react/list";
 import { M3eListItem } from "@m3e/react/list";
 import { M3eSlider } from "@m3e/react/slider";
@@ -28,11 +28,13 @@ import {
   isGitHubPagesHost,
   type AppSettings,
 } from "./types";
-
 type Props = {
+  open: boolean;
   settings: AppSettings;
   onChange: (next: AppSettings | ((s: AppSettings) => AppSettings)) => void;
   onClose: () => void;
+  /** Opens the drop-tag list, which App renders as its own modal. */
+  onEditDropTags: () => void;
   onSnack: (message: string) => void;
 };
 
@@ -51,9 +53,11 @@ function formatSavedAt(ts: number | null): string {
 }
 
 export function SettingsPanel({
+  open,
   settings,
   onChange,
   onClose,
+  onEditDropTags,
   onSnack,
 }: Props) {
   const onPages = isGitHubPagesHost();
@@ -72,8 +76,9 @@ export function SettingsPanel({
   }, []);
 
   useEffect(() => {
+    if (!open) return;
     void refresh();
-  }, [refresh, settings.browserModel, settings.ensembleModels.join(",")]);
+  }, [open, refresh, settings.browserModel, settings.ensembleModels.join(",")]);
 
   const patch = (partial: Partial<AppSettings>) => {
     onChange((s) => ({ ...s, ...partial }));
@@ -112,17 +117,16 @@ export function SettingsPanel({
       : null;
 
   return (
-    <section className="settings-sheet" aria-label="設定">
-      <header className="settings-sheet-head">
-        <div>
-          <p className="settings-kicker">Settings</p>
-          <h2 className="settings-title">設定</h2>
-        </div>
-        <M3eIconButton type="button" aria-label="閉じる" onClick={onClose}>
-          <M3eIcon name="close" />
-        </M3eIconButton>
-      </header>
-
+    <M3eDialog
+      className="settings-dialog"
+      open={open}
+      dismissible
+      closeLabel="設定を閉じる"
+      onClosed={onClose}
+      onCancel={onClose}
+    >
+      <span slot="header">設定</span>
+      <div className="settings-sheet">
       {onPages && (
         <p className="settings-banner">
           GitHub Pages では画像を端末内で解析します。JoyCaption は PC で API
@@ -421,6 +425,36 @@ export function SettingsPanel({
           </label>
         )}
       </div>
-    </section>
+
+      <M3eDivider />
+
+      <div className="settings-block">
+        <div className="settings-block-head">
+          <h3 className="settings-block-title">
+            <M3eIcon name="do_not_disturb_on" />
+            削除タグ
+          </h3>
+          <M3eButton type="button" variant="tonal" onClick={onEditDropTags}>
+            <M3eIcon slot="icon" name="edit" />
+            編集
+          </M3eButton>
+        </div>
+        <p className="settings-help">
+          検閲・モノクロ・漫画・構図ノイズ（v / multiple views）は既定で削除します。
+          {settings.dropTags.length > 0
+            ? `追加で ${settings.dropTags.length} 件を削除中: ${settings.dropTags
+                .slice(0, 6)
+                .join(", ")}${settings.dropTags.length > 6 ? " …" : ""}`
+            : "追加のタグは未登録です。"}
+        </p>
+      </div>
+      </div>
+
+      <div slot="actions" className="dialog-actions">
+        <M3eButton type="button" variant="filled" onClick={onClose}>
+          閉じる
+        </M3eButton>
+      </div>
+    </M3eDialog>
   );
 }
