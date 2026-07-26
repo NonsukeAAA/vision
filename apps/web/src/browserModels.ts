@@ -25,8 +25,9 @@ export type BrowserModelInfo = {
   /** Hugging Face repo used for selected_tags.csv (and default model.onnx). */
   hfRepo: string;
   /**
-   * Optional site-relative or absolute ONNX URL override (e.g. Pages-hosted INT8).
-   * When relative, resolved against import.meta.env.BASE_URL.
+   * Optional ONNX / split-manifest URL override (e.g. Pages-hosted INT8).
+   * Absolute `https://…` or site-relative path (resolved via {@link modelOnnxUrl}).
+   * Never pass BASE_URL alone into `new URL()` — it is path-only (`/vision/`).
    */
   modelUrl?: string;
   sizeMb: number;
@@ -137,16 +138,31 @@ export function modelHfBase(id: BrowserModelId): string {
   return `https://huggingface.co/${BROWSER_MODELS[id].hfRepo}/resolve/main`;
 }
 
+/** Join Vite BASE_URL (path-only) with a relative asset path — no `new URL()`. */
+export function siteAssetPath(relativePath: string): string {
+  const base = import.meta.env.BASE_URL || "/";
+  const normalizedBase = base.endsWith("/") ? base : `${base}/`;
+  return `${normalizedBase}${relativePath.replace(/^\//, "")}`;
+}
+
+/**
+ * Absolute URL for site assets. Uses `location.origin` when available so callers
+ * never need `new URL(rel, BASE_URL)` (BASE_URL is not a valid URL base).
+ */
+export function siteAssetUrl(relativePath: string): string {
+  const path = siteAssetPath(relativePath);
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return new URL(path, window.location.origin).href;
+  }
+  return path;
+}
+
 /** ONNX weight URL (Pages INT8 override or Hugging Face). */
 export function modelOnnxUrl(id: BrowserModelId): string {
   const info = BROWSER_MODELS[id];
   if (info.modelUrl) {
     if (/^https?:\/\//i.test(info.modelUrl)) return info.modelUrl;
-    // BASE_URL is a path (e.g. "/vision/") — not a valid absolute URL for `new URL()`.
-    const base = import.meta.env.BASE_URL || "/";
-    const normalizedBase = base.endsWith("/") ? base : `${base}/`;
-    const path = info.modelUrl.replace(/^\//, "");
-    return `${normalizedBase}${path}`;
+    return siteAssetUrl(info.modelUrl);
   }
   return `${modelHfBase(id)}/model.onnx`;
 }

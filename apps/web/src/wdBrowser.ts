@@ -353,9 +353,16 @@ async function writeOpfsMeta(
 }
 
 function resolveSiblingUrl(manifestUrl: string, name: string): string {
-  // manifestUrl is path-absolute (e.g. "/vision/models/foo.json") or full URL.
+  // Prefer a real absolute base so `new URL` never sees path-only "/vision/…".
+  const origin =
+    typeof window !== "undefined" && window.location?.origin
+      ? window.location.origin
+      : "";
   if (/^https?:\/\//i.test(manifestUrl)) {
     return new URL(name, manifestUrl).href;
+  }
+  if (origin && manifestUrl.startsWith("/")) {
+    return new URL(name, new URL(manifestUrl, origin)).href;
   }
   const dir = manifestUrl.includes("/")
     ? manifestUrl.slice(0, manifestUrl.lastIndexOf("/") + 1)
