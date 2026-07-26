@@ -186,7 +186,10 @@ export default function App() {
       const base = caption ?? "";
       if (!base.trim()) return "uncensored";
       const cleaned = base
-        .replace(/\b(mosaic|censor(?:ed|ing| bar)?|bar censor|pixelated)\b/gi, "")
+        .replace(
+          /\b(mosaic|censor(?:ed|ing| bar)?|bar censor|pixelated|monochrome|grayscale|greyscale|comic|manga|4koma|lineart|sketch|speech bubble|screentone|halftone)\b/gi,
+          "",
+        )
         .replace(/\s{2,}/g, " ")
         .trim();
       if (/\buncensored\b/i.test(cleaned)) return cleaned;
