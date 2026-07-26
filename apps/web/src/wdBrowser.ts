@@ -88,22 +88,26 @@ let lastProgress: LoadProgress = {
 };
 
 let lastLoggedPhase = "";
+let lastLoggedDecile = -1;
 let lastPhaseLogAt = 0;
 
 function emit(cb: ProgressFn | undefined, p: LoadProgress) {
   lastProgress = p;
-  // Every phase change becomes a breadcrumb; long downloads get one every 2s so a
-  // tab that dies mid-transfer still shows how far it got.
-  const key = `${p.phase}:${p.modelId ?? ""}:${p.message}`;
+  // Every phase change is a breadcrumb, but a download would otherwise flood the
+  // ring buffer and push out the entries that explain a crash: keep one per 10%.
+  const key = `${p.phase}:${p.modelId ?? ""}`;
+  const pct = p.total > 0 ? Math.round((p.loaded / p.total) * 100) : null;
+  const decile = pct == null ? -1 : Math.floor(pct / 10);
   const now = Date.now();
-  if (key !== lastLoggedPhase || now - lastPhaseLogAt > 2000) {
+  const phaseChanged = key !== lastLoggedPhase;
+  if (phaseChanged || decile !== lastLoggedDecile || now - lastPhaseLogAt > 5000) {
     lastLoggedPhase = key;
+    lastLoggedDecile = decile;
     lastPhaseLogAt = now;
     logInfo(`progress:${p.phase}`, {
       model: p.modelId,
       message: p.message,
-      pct:
-        p.total > 0 ? Math.round((p.loaded / p.total) * 100) : null,
+      pct,
       mb: p.total > 1e6 ? Math.round(p.loaded / 1e6) : null,
     });
   }

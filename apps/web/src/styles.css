@@ -1195,6 +1195,23 @@ select {
   font-size: 0.8125rem;
 }
 
+.notice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  color: #6d4c11;
+  background: rgba(196, 138, 27, 0.12);
+  border: 1px solid rgba(196, 138, 27, 0.28);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+}
+
+.notice .error-actions button {
+  color: inherit;
+  border-color: rgba(109, 76, 17, 0.4);
+}
+
 .error-actions {
   display: flex;
   gap: var(--space-sm);

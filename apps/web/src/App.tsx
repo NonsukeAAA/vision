@@ -58,6 +58,9 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showDropTags, setShowDropTags] = useState(false);
   const [showLog, setShowLog] = useState(false);
+  // A hard tab kill leaves no error to show, so the last session's verdict gets
+  // its own banner instead of a snack that another message can overwrite.
+  const [crashNotice, setCrashNotice] = useState(() => getPreviousSessionReport());
   const [apiStatus, setApiStatus] = useState<string>("準備完了 · 解析時にモデルを取得します");
   const [modelReady, setModelReady] = useState(true);
   const [loadProgress, setLoadProgress] = useState<LoadProgress | null>(null);
@@ -178,17 +181,6 @@ export default function App() {
     return () => {
       if (copyResetRef.current) window.clearTimeout(copyResetRef.current);
     };
-  }, []);
-
-  // Surface a hard tab kill: the log holds the last step before it happened.
-  useEffect(() => {
-    const crash = getPreviousSessionReport();
-    if (!crash) return;
-    setSnack(
-      crash.analyzing
-        ? "前回は解析中に強制終了しました。設定 → 診断ログで原因を確認できます"
-        : "前回は正常に終了していません。設定 → 診断ログを確認できます",
-    );
   }, []);
 
   // Bring the previous image back on load, including after iOS drops the tab,
@@ -755,6 +747,25 @@ export default function App() {
                 )}
               </div>
             )}
+
+          {crashNotice && (
+            <div className="notice" role="status">
+              <span>
+                {crashNotice.analyzing
+                  ? "前回は解析中に強制終了しました。メモリ不足の可能性が高いので、単体モデルか軽いモデルで試してください。"
+                  : "前回は正常に終了していません。"}
+                {crashNotice.lastMsg ? `（最後の記録: ${crashNotice.lastMsg}）` : ""}
+              </span>
+              <div className="error-actions">
+                <button type="button" onClick={() => setShowLog(true)}>
+                  ログを見る
+                </button>
+                <button type="button" onClick={() => setCrashNotice(null)}>
+                  閉じる
+                </button>
+              </div>
+            </div>
+          )}
 
           {error && (
             <div className="error" role="alert">
