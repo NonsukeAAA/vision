@@ -15,6 +15,7 @@ import {
   type TaggedByModel,
 } from "./mergeTags";
 import { requestPersistentStorage } from "./deviceResources";
+import { loadDrawable, releaseScratch, scratchContext } from "./imageSource";
 
 const TARGET = 448;
 const CACHE_PREFIX = "vision-tagger-v3";
@@ -924,67 +925,11 @@ async function loadTags(
   return tags;
 }
 
-type Drawable = {
-  source: CanvasImageSource;
-  width: number;
-  height: number;
-  release: () => void;
-};
-
-/**
- * Decode a picked file for drawing.
- *
- * Safari fails `createImageBitmap` for a freshly picked photo often enough that the
- * first analyze of every new image used to error out, so fall back to an `<img>`,
- * which decodes the same file reliably.
- */
-async function loadDrawable(file: File): Promise<Drawable> {
-  try {
-    const bitmap = await createImageBitmap(file);
-    return {
-      source: bitmap,
-      width: bitmap.width,
-      height: bitmap.height,
-      release: () => bitmap.close(),
-    };
-  } catch {
-    const url = URL.createObjectURL(file);
-    try {
-      const img = new Image();
-      img.src = url;
-      await new Promise<void>((resolve, reject) => {
-        img.onload = () => resolve();
-        img.onerror = () =>
-          reject(new Error("画像を読み込めませんでした（形式を確認してください）"));
-      });
-      if (typeof img.decode === "function") {
-        try {
-          await img.decode();
-        } catch {
-          // onload already guarantees dimensions; decode is best-effort
-        }
-      }
-      return {
-        source: img,
-        width: img.naturalWidth,
-        height: img.naturalHeight,
-        release: () => URL.revokeObjectURL(url),
-      };
-    } catch (err) {
-      URL.revokeObjectURL(url);
-      throw err;
-    }
-  }
-}
-
 /** WD v3: white-pad square, BGR NHWC 0–255 float */
 async function imageToWdTensor(file: File): Promise<ort.Tensor> {
   const image = await loadDrawable(file);
   const size = Math.max(image.width, image.height);
-  const canvas = document.createElement("canvas");
-  canvas.width = TARGET;
-  canvas.height = TARGET;
-  const ctx = canvas.getContext("2d")!;
+  const ctx = scratchContext(TARGET, TARGET);
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, TARGET, TARGET);
   const scale = TARGET / size;
@@ -996,6 +941,7 @@ async function imageToWdTensor(file: File): Promise<ort.Tensor> {
   image.release();
 
   const { data } = ctx.getImageData(0, 0, TARGET, TARGET);
+  releaseScratch();
   const float = new Float32Array(TARGET * TARGET * 3);
   for (let i = 0, j = 0; i < data.length; i += 4, j += 3) {
     float[j] = data[i + 2];
@@ -1008,14 +954,12 @@ async function imageToWdTensor(file: File): Promise<ort.Tensor> {
 /** PixAI: stretch resize 448, RGB NCHW, normalize mean/std 0.5 */
 async function imageToPixaiTensor(file: File): Promise<ort.Tensor> {
   const image = await loadDrawable(file);
-  const canvas = document.createElement("canvas");
-  canvas.width = TARGET;
-  canvas.height = TARGET;
-  const ctx = canvas.getContext("2d")!;
+  const ctx = scratchContext(TARGET, TARGET);
   ctx.drawImage(image.source, 0, 0, TARGET, TARGET);
   image.release();
 
   const { data } = ctx.getImageData(0, 0, TARGET, TARGET);
+  releaseScratch();
   const float = new Float32Array(3 * TARGET * TARGET);
   const hw = TARGET * TARGET;
   for (let i = 0, p = 0; i < data.length; i += 4, p++) {
@@ -1034,6 +978,129 @@ function pickOutput(
   return output[session.outputNames[0]];
 }
 
+/**
+ * Set to false the first time a Worker run fails, so a device where module
+ * Workers are unusable still gets results from the main thread.
+ */
+let workersUsable = true;
+
+/**
+ * Mobile Safari never shrinks `WebAssembly.Memory`, so a warm session plus each
+ * run's activations creep up until the tab is killed — which is what made repeated
+ * PixAI analyses die. Give those runs a Worker that is terminated afterwards.
+ *
+ * Only PixAI: its EVA02 activations at 448px dwarf the WD models', which have
+ * always survived repeated main-thread runs and would only get slower here.
+ */
+function useEphemeralWorker(modelId: BrowserModelId): boolean {
+  if (!workersUsable) return false;
+  if (typeof Worker === "undefined") return false;
+  if (!opfsSupported()) return false;
+  if (!isAppleMobileUa()) return false;
+  const info = BROWSER_MODELS[modelId];
+  return info.family === "pixai" && info.sizeMb >= HEAVY_MODEL_MB;
+}
+
+async function ensureModelFileOnDisk(
+  modelId: BrowserModelId,
+  onProgress?: ProgressFn,
+  signal?: AbortSignal,
+): Promise<void> {
+  const info = BROWSER_MODELS[modelId];
+  await loadModelFilePersistent(
+    modelId,
+    modelOnnxUrl(modelId),
+    onProgress,
+    info.shortLabel,
+    signal,
+  );
+}
+
+function inferInEphemeralWorker(opts: {
+  modelId: BrowserModelId;
+  inputName: string;
+  dims: number[];
+  input: Float32Array;
+  large: boolean;
+  onProgress?: ProgressFn;
+  signal?: AbortSignal;
+}): Promise<Float32Array> {
+  const { modelId, inputName, dims, input, large, onProgress, signal } = opts;
+  return new Promise<Float32Array>((resolve, reject) => {
+    let settled = false;
+    let worker: Worker;
+    try {
+      worker = new Worker(new URL("./tagger.worker.ts", import.meta.url), {
+        type: "module",
+      });
+    } catch (err) {
+      reject(err instanceof Error ? err : new Error(String(err)));
+      return;
+    }
+
+    const onAbort = () => finish(new DOMException("Aborted", "AbortError"));
+
+    const finish = (err?: Error, probs?: Float32Array) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      try {
+        // Terminating is the point: it hands the whole WASM heap back.
+        worker.terminate();
+      } catch {
+        // ignore
+      }
+      if (err) reject(err);
+      else resolve(probs!);
+    };
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+
+    worker.onmessage = (
+      ev: MessageEvent<
+        | { type: "progress"; message: string }
+        | { type: "ok"; probs: Float32Array }
+        | { type: "error"; message: string }
+      >,
+    ) => {
+      const data = ev.data;
+      if (data.type === "progress") {
+        emit(onProgress, {
+          phase: "init",
+          loaded: 1,
+          total: 1,
+          message: data.message,
+          modelId,
+        });
+        return;
+      }
+      if (data.type === "ok") {
+        finish(undefined, data.probs);
+        return;
+      }
+      finish(new Error(data.message || "Worker 推論に失敗しました"));
+    };
+    worker.onerror = (ev) => {
+      finish(new Error(ev.message || "Worker が異常終了しました"));
+    };
+
+    // Send a copy so the caller keeps its input for a main-thread fallback.
+    const copy = input.slice();
+    worker.postMessage(
+      {
+        type: "infer" as const,
+        modelId,
+        opfsDir: OPFS_DIR,
+        inputName,
+        dims,
+        input: copy,
+        large,
+      },
+      [copy.buffer],
+    );
+  });
+}
+
 async function runOneModel(
   file: File,
   modelId: BrowserModelId,
@@ -1048,9 +1115,19 @@ async function runOneModel(
   activeModelId = modelId;
   const family = BROWSER_MODELS[modelId].family;
   const info = BROWSER_MODELS[modelId];
+  const large = info.sizeMb >= HEAVY_MODEL_MB;
+  const ephemeral = useEphemeralWorker(modelId);
 
   const tags = await loadTags(modelId, onProgress, signal);
   throwIfAborted(signal);
+
+  if (ephemeral) {
+    // Nothing may hold WASM memory while the Worker builds its own session.
+    await releaseBrowserSessions();
+    void requestPersistentStorage();
+    await ensureModelFileOnDisk(modelId, onProgress, signal);
+    throwIfAborted(signal);
+  }
 
   const inputTensor =
     family === "pixai"
@@ -1060,30 +1137,62 @@ async function runOneModel(
   const inputData = Float32Array.from(inputTensor.data as Float32Array);
   inputTensor.dispose();
 
-  if (hasWarmBrowserSession(modelId)) {
+  const runOnMainThread = async (): Promise<Float32Array> => {
+    if (hasWarmBrowserSession(modelId)) {
+      emit(onProgress, {
+        phase: "ready",
+        loaded: 1,
+        total: 1,
+        message: `${info.shortLabel}（セッション再利用）`,
+        modelId,
+      });
+    }
+    const session = await loadSession(modelId, onProgress, signal);
+    const name =
+      session.inputNames.includes("input") && family === "pixai"
+        ? "input"
+        : session.inputNames[0];
+    const tensor = new ort.Tensor("float32", inputData, dims);
+    const fetches = session.outputNames.includes("prediction")
+      ? ["prediction"]
+      : [session.outputNames[0]];
+    const output = await session.run({ [name]: tensor }, fetches);
+    const out = pickOutput(session, output);
+    // Copy out of the WASM heap immediately so the tensor can be dropped.
+    const copied = Float32Array.from(out.data as Float32Array);
+    tensor.dispose();
+    out.dispose();
+    return copied;
+  };
+
+  let probs: Float32Array;
+  if (ephemeral) {
     emit(onProgress, {
-      phase: "ready",
+      phase: "init",
       loaded: 1,
       total: 1,
-      message: `${info.shortLabel}（セッション再利用）`,
+      message: `${info.shortLabel} を Worker で実行（終了時にメモリ解放）…`,
       modelId,
     });
+    try {
+      probs = await inferInEphemeralWorker({
+        modelId,
+        inputName: family === "pixai" ? "input" : "auto",
+        dims,
+        input: inputData,
+        large,
+        onProgress,
+        signal,
+      });
+    } catch (err) {
+      throwIfAborted(signal);
+      if (err instanceof DOMException && err.name === "AbortError") throw err;
+      workersUsable = false;
+      probs = await runOnMainThread();
+    }
+  } else {
+    probs = await runOnMainThread();
   }
-  const session = await loadSession(modelId, onProgress, signal);
-  const name =
-    session.inputNames.includes("input") && family === "pixai"
-      ? "input"
-      : session.inputNames[0];
-  const tensor = new ort.Tensor("float32", inputData, dims);
-  const fetches = session.outputNames.includes("prediction")
-    ? ["prediction"]
-    : [session.outputNames[0]];
-  const output = await session.run({ [name]: tensor }, fetches);
-  const out = pickOutput(session, output);
-  // Copy out of the WASM heap immediately so the tensor can be dropped.
-  const probs = Float32Array.from(out.data as Float32Array);
-  tensor.dispose();
-  out.dispose();
 
   const categoryMap: Record<number, string> = {
     0: "general",
@@ -1108,9 +1217,9 @@ async function runOneModel(
   }
   results.sort((a, b) => b.score - a.score);
 
-  // Keep the main-thread session warm for repeat analyzes. Safari does not
-  // return WASM memory after release(); recreating PixAI OOMs by the 2nd/3rd try.
-  // Only tear down when switching models (loadSession / App settings effect).
+  // Main-thread sessions stay warm for repeat analyzes; they are torn down when
+  // the model changes (loadSession / the settings effect in App). Worker runs
+  // already gave their memory back by terminating.
 
   return { modelId, tags: results };
 }

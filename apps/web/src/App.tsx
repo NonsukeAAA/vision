@@ -29,6 +29,8 @@ import {
   type LoadProgress,
 } from "./wdBrowser";
 import { forceUncensoredTags, setCustomDropTags } from "./forceUncensored";
+import { downscaleImageFile } from "./imageSource";
+import { clearLastImage, loadLastImage, saveLastImage } from "./lastImage";
 import { SettingsPanel } from "./SettingsPanel";
 import { DropTagsDialog } from "./DropTagsDialog";
 
@@ -58,6 +60,9 @@ export default function App() {
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const copyResetRef = useRef<number | null>(null);
   const runAbortRef = useRef<AbortController | null>(null);
+  const previewUrlRef = useRef<string | null>(null);
+  const fileRef = useRef<File | null>(null);
+  fileRef.current = file;
   const showingResult = screen === "result" && !!result;
   const activeModel = BROWSER_MODELS[settings.browserModel];
   const runModels =
@@ -167,6 +172,20 @@ export default function App() {
     };
   }, []);
 
+  // Bring the previous image back after a reload, including one forced by iOS
+  // killing the tab, so the user does not have to pick the same file again.
+  useEffect(() => {
+    let cancelled = false;
+    void loadLastImage().then((restored) => {
+      if (cancelled || !restored || fileRef.current) return;
+      showImage(restored);
+      setSnack("前回の画像を復元しました");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const idleStatus = () => {
     if (settings.engine !== "browser") return apiStatus;
     const label =
@@ -176,13 +195,10 @@ export default function App() {
     return `${label} · 解析の準備ができました`;
   };
 
-  const pickFile = (next: File | null) => {
+  const resetForNewImage = () => {
     // A new image starts from scratch: cancel whatever the previous one was doing.
     runAbortRef.current?.abort();
     runAbortRef.current = null;
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setFile(next);
-    setPreviewUrl(next ? URL.createObjectURL(next) : null);
     setResult(null);
     setEditableTags([]);
     setPrompt("");
@@ -195,15 +211,37 @@ export default function App() {
       window.clearTimeout(copyResetRef.current);
       copyResetRef.current = null;
     }
-    if (next) startTransition(() => setScreen("home"));
-    else setScreen("home");
+  };
+
+  const showImage = (next: File | null) => {
+    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    const url = next ? URL.createObjectURL(next) : null;
+    previewUrlRef.current = url;
+    setFile(next);
+    setPreviewUrl(url);
+  };
+
+  const pickFile = async (next: File | null) => {
+    resetForNewImage();
+    if (!next) {
+      showImage(null);
+      setScreen("home");
+      void clearLastImage();
+      return;
+    }
+    // Downscale once here so every analyze decodes a small file instead of a
+    // full phone photo, and so the preview holds less memory.
+    const prepared = await downscaleImageFile(next);
+    showImage(prepared);
+    startTransition(() => setScreen("home"));
+    void saveLastImage(prepared);
   };
 
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
     setDragging(false);
     const f = e.dataTransfer.files?.[0];
-    if (f && f.type.startsWith("image/")) pickFile(f);
+    if (f && f.type.startsWith("image/")) void pickFile(f);
   };
 
   const rebuildPrompt = (tags: TagScore[], caption: string | null, mode: OutputMode) => {
@@ -604,7 +642,7 @@ export default function App() {
                 type="file"
                 accept="image/*"
                 hidden
-                onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
+                onChange={(e) => void pickFile(e.target.files?.[0] ?? null)}
               />
             </div>
           ) : (
@@ -637,7 +675,7 @@ export default function App() {
                   type="file"
                   accept="image/*"
                   hidden
-                  onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
+                  onChange={(e) => void pickFile(e.target.files?.[0] ?? null)}
                 />
               </div>
 
@@ -655,7 +693,7 @@ export default function App() {
                     <button
                       type="button"
                       className="btn-text"
-                      onClick={() => pickFile(null)}
+                      onClick={() => void pickFile(null)}
                     >
                       クリア
                     </button>
