@@ -6,7 +6,7 @@
  *
  * Heavy FP32 weights are swapped for smaller builds where needed so tabs survive
  * InferenceSession.create (JS buffer + WASM copy ≈ 2× file size).
- * PixAI uses FP16 (dynamic INT8 destroyed tag accuracy).
+ * PixAI uses 4-bit block-quantized weights (MatMulNBits); see its entry below.
  */
 
 export type BrowserModelId =
@@ -26,7 +26,7 @@ export type BrowserModelInfo = {
   /** Hugging Face repo used for selected_tags.csv (and default model.onnx). */
   hfRepo: string;
   /**
-   * Optional ONNX / split-manifest URL override (e.g. Pages-hosted FP16).
+   * Optional ONNX / split-manifest URL override (e.g. Pages-hosted quantized weights).
    * Absolute `https://…` or site-relative path (resolved via {@link modelOnnxUrl}).
    * Never pass BASE_URL alone into `new URL()` — it is path-only (`/vision/`).
    */
@@ -73,15 +73,23 @@ export const BROWSER_MODELS: Record<BrowserModelId, BrowserModelInfo> = {
   "pixai-v09": {
     id: "pixai-v09",
     family: "pixai",
-    label: "PixAI Tagger v0.9 (FP16)",
+    label: "PixAI Tagger v0.9 (4bit)",
     shortLabel: "PixAI",
-    description: "キャラ・新作IPに強い · FP16（約607MB）",
-    // Tags/preprocess from deepghs; FP16 weights as split parts on Pages (<100MB each).
-    // Dynamic INT8 was abandoned — top tags became unrelated characters.
+    description: "キャラ・新作IPに強い · 4bit量子化（約257MB）",
+    // Tags/preprocess from deepghs; weights as split parts on Pages (<100MB each).
+    //
+    // Weight format history for this EVA02 model:
+    // - FP32 (1.2GB) and FP16 (607MB) both blow past mobile Safari's budget: the
+    //   WASM CPU EP has no fp16 kernels, so initializers are cast back to fp32 at
+    //   session create (measured 2.0GB peak RSS for the FP16 file).
+    // - Dynamic INT8 (per-tensor or per-channel) destroys accuracy — the MLP
+    //   weights have outliers wide enough that top tags become unrelated
+    //   characters (cos 0.12, top50 1/50 vs FP32).
+    // - 4-bit MatMulNBits with block_size=32 keeps per-block scales, which
+    //   survives those outliers: cos 0.998, top50 48/50, 507MB peak RSS.
     hfRepo: "deepghs/pixai-tagger-v0.9-onnx",
-    modelUrl: "models/pixai-v09-fp16.json",
-    sizeMb: 607,
-    // Heavy (~607MB + WASM); may OOM on low-RAM devices, but keep selectable.
+    modelUrl: "models/pixai-v09-q4.json",
+    sizeMb: 257,
     mobileFriendly: true,
     qualityRank: 4,
   },
