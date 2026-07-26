@@ -1,7 +1,8 @@
-import * as ort from "onnxruntime-web/wasm";
+import * as ort from "onnxruntime-web/webgpu";
 import type { TagScore } from "./types";
 import { forceUncensoredTags } from "./forceUncensored";
 import {
+  BROWSER_MODEL_LIST,
   BROWSER_MODELS,
   isAppleMobileUa,
   modelHfBase,
@@ -13,13 +14,22 @@ import {
   mergedToTagScores,
   type TaggedByModel,
 } from "./mergeTags";
+import { requestPersistentStorage } from "./deviceResources";
 
 const TARGET = 448;
 const CACHE_PREFIX = "vision-tagger-v3";
 /** Cache API only for small assets (tags CSV). ONNX goes to OPFS. */
 const MAX_CACHE_BYTES = 8 * 1024 * 1024;
-/** Bump when hosted weights change so a broken OPFS cache (e.g. bad INT8) is ignored. */
-const OPFS_DIR = "vision-models-v5";
+/** Bump when hosted weights or load strategy change. */
+const OPFS_DIR = "vision-models-v6";
+
+type OpfsModelMeta = {
+  url: string;
+  bytes: number;
+  modelId: BrowserModelId;
+  savedAt: number;
+  sha256?: string;
+};
 
 type TagRow = { name: string; category: number };
 export type LoadProgress = {
@@ -28,6 +38,18 @@ export type LoadProgress = {
   total: number;
   message: string;
   modelId?: BrowserModelId;
+};
+
+export type CachedModelInfo = {
+  id: BrowserModelId;
+  label: string;
+  shortLabel: string;
+  present: boolean;
+  bytes: number | null;
+  expectedMb: number;
+  savedAt: number | null;
+  url: string | null;
+  tagsCached: boolean;
 };
 
 type ProgressFn = (p: LoadProgress) => void;
@@ -101,6 +123,131 @@ export async function releaseBrowserSessions(
   await Promise.all(jobs);
 }
 
+async function yieldForPaint(ms = 50): Promise<void> {
+  await new Promise<void>((resolve) => {
+    requestAnimationFrame(() => {
+      setTimeout(resolve, ms);
+    });
+  });
+}
+
+let webGpuChecked: boolean | null = null;
+async function webGpuAvailable(): Promise<boolean> {
+  if (webGpuChecked != null) return webGpuChecked;
+  try {
+    const nav = navigator as Navigator & { gpu?: { requestAdapter: () => Promise<unknown> } };
+    if (!nav.gpu) {
+      webGpuChecked = false;
+      return false;
+    }
+    const adapter = await nav.gpu.requestAdapter();
+    webGpuChecked = !!adapter;
+    return webGpuChecked;
+  } catch {
+    webGpuChecked = false;
+    return false;
+  }
+}
+
+export async function listCachedBrowserModels(): Promise<CachedModelInfo[]> {
+  const out: CachedModelInfo[] = [];
+  let dir: FileSystemDirectoryHandle | null = null;
+  if (opfsSupported()) {
+    try {
+      dir = await opfsModelsDir();
+    } catch {
+      dir = null;
+    }
+  }
+
+  for (const info of BROWSER_MODEL_LIST) {
+    let present = false;
+    let bytes: number | null = null;
+    let savedAt: number | null = null;
+    let url: string | null = null;
+    if (dir) {
+      try {
+        const meta = await readOpfsMeta(dir, info.id);
+        const file = await (
+          await dir.getFileHandle(`${info.id}.onnx`)
+        ).getFile();
+        if (meta && file.size >= 1_000_000) {
+          present = true;
+          bytes = file.size;
+          savedAt = meta.savedAt ?? null;
+          url = meta.url ?? null;
+        }
+      } catch {
+        // missing
+      }
+    }
+    let tagsCached = false;
+    try {
+      const tagsUrl = `${modelHfBase(info.id)}/selected_tags.csv`;
+      tagsCached = !!(await cacheMatch(info.id, tagsUrl));
+    } catch {
+      tagsCached = false;
+    }
+    out.push({
+      id: info.id,
+      label: info.label,
+      shortLabel: info.shortLabel,
+      present,
+      bytes,
+      expectedMb: info.sizeMb,
+      savedAt,
+      url,
+      tagsCached,
+    });
+  }
+  return out;
+}
+
+export async function deleteCachedBrowserModel(
+  id: BrowserModelId,
+): Promise<void> {
+  clearBrowserModelRuntime(id);
+  if (opfsSupported()) {
+    try {
+      const dir = await opfsModelsDir();
+      for (const name of [`${id}.onnx`, `${id}.meta.json`]) {
+        try {
+          await dir.removeEntry(name);
+        } catch {
+          // ignore
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+  try {
+    await caches.delete(cacheName(id));
+  } catch {
+    // ignore
+  }
+}
+
+export async function clearAllCachedBrowserModels(): Promise<void> {
+  await releaseBrowserSessions();
+  clearBrowserModelRuntime();
+  for (const info of BROWSER_MODEL_LIST) {
+    await deleteCachedBrowserModel(info.id);
+  }
+}
+
+async function readOpfsMeta(
+  dir: FileSystemDirectoryHandle,
+  id: BrowserModelId,
+): Promise<OpfsModelMeta | null> {
+  try {
+    const file = await (await dir.getFileHandle(`${id}.meta.json`)).getFile();
+    return JSON.parse(await file.text()) as OpfsModelMeta;
+  } catch {
+    return null;
+  }
+}
+
 export function formatModelLoadError(err: unknown): string {
   if (err instanceof DOMException && err.name === "AbortError") {
     return "ダウンロードを中断しました";
@@ -124,14 +271,12 @@ function cacheName(id: BrowserModelId): string {
 
 function configureOrtWasm() {
   if (wasmConfigured) return;
-  const ver = ort.env.versions?.web ?? "1.27.0";
-  // MUST match installed onnxruntime-web JS (mismatch → _OrtGetInputOutputMetadata errors)
-  ort.env.wasm.wasmPaths = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ver}/dist/`;
+  // Leave wasmPaths to the Vite-bundled asset (WebGPU uses asyncify/jsep builds).
+  // Overwriting with a CDN path can load the wrong .wasm and break session create.
   // Pages is not crossOriginIsolated — multi-thread WASM breaks on Safari.
   ort.env.wasm.numThreads = 1;
   ort.env.wasm.proxy = false;
-  // ORT 1.27 only ships simd-threaded.wasm. Setting false skips the feature probe
-  // (Safari sometimes reports no SIMD incorrectly) without changing the binary name.
+  // Avoid brittle SIMD feature probes on some Safari builds.
   if (isAppleMobileUa()) {
     ort.env.wasm.simd = false;
   }
@@ -304,14 +449,6 @@ async function opfsModelsDir(): Promise<FileSystemDirectoryHandle> {
   const root = await navigator.storage.getDirectory();
   return root.getDirectoryHandle(OPFS_DIR, { create: true });
 }
-
-type OpfsModelMeta = {
-  url: string;
-  bytes: number;
-  modelId: BrowserModelId;
-  savedAt: number;
-  sha256?: string;
-};
 
 type PartManifest = {
   id: string;
@@ -574,12 +711,17 @@ async function createSessionFromBytesOrFile(
   signal?: AbortSignal,
 ): Promise<ort.InferenceSession> {
   throwIfAborted(signal);
+  const preferWebGpu = await webGpuAvailable();
+  const executionProviders: ort.InferenceSession.SessionOptions["executionProviders"] =
+    preferWebGpu ? ["webgpu", "wasm"] : ["wasm"];
+
   const options: ort.InferenceSession.SessionOptions = {
-    executionProviders: ["wasm"],
-    // Avoid heavy graph opts that spike RAM on top of the model copy.
-    graphOptimizationLevel: large ? "disabled" : "basic",
+    executionProviders,
+    // Large models: skip heavy opts that spike RAM; keep basic so unused outputs can fold.
+    graphOptimizationLevel: large ? "basic" : "all",
     enableCpuMemArena: false,
     enableMemPattern: false,
+    executionMode: "sequential",
   };
 
   if (source instanceof File) {
@@ -606,10 +748,15 @@ async function loadSession(
       const info = BROWSER_MODELS[modelId];
       const modelUrl = modelOnnxUrl(modelId);
       const large = info.sizeMb >= 300;
-      // Prefer OPFS for all ONNX so reloads don't re-download (Cache API OOMs on large blobs).
       const useOpfs = opfsSupported();
 
-      // Large ONNX needs ~2× size in memory (buffer + WASM heap). Evict others first.
+      // Large models must stay on OPFS — in-memory fetch OOMs Safari.
+      if (large && !useOpfs) {
+        throw new Error(
+          `${info.shortLabel} には端末ストレージ（OPFS）が必要です。別のブラウザで試すか、ViT を使ってください`,
+        );
+      }
+
       if (large || isAppleMobileUa()) {
         emit(onProgress, {
           phase: "init",
@@ -619,6 +766,8 @@ async function loadSession(
           modelId,
         });
         await releaseBrowserSessions(modelId);
+        void requestPersistentStorage();
+        await yieldForPaint(large ? 120 : 50);
       }
 
       emit(onProgress, {
@@ -649,20 +798,19 @@ async function loadSession(
       }
       throwIfAborted(signal);
 
+      const usingGpu = await webGpuAvailable();
       emit(onProgress, {
         phase: "init",
         loaded: 1,
         total: 1,
         message: large
-          ? `${info.shortLabel} 初期化中（メモリを多く使います）…`
+          ? `${info.shortLabel} 初期化中（${usingGpu ? "WebGPU" : "WASM"} · メモリを多く使います）…`
           : `${info.shortLabel} ONNX 初期化中…`,
         modelId,
       });
 
-      // Let the progress UI paint before the blocking WASM alloc (often kills Safari).
-      await new Promise<void>((r) => {
-        requestAnimationFrame(() => setTimeout(r, 40));
-      });
+      // Let the progress UI paint; give Safari time to reclaim memory.
+      await yieldForPaint(large || isAppleMobileUa() ? 160 : 40);
       throwIfAborted(signal);
 
       try {
@@ -823,11 +971,23 @@ async function runOneModel(
   activeModelId = modelId;
   const family = BROWSER_MODELS[modelId].family;
   const info = BROWSER_MODELS[modelId];
-  const [session, tags] = await Promise.all([
-    loadSession(modelId, onProgress, signal),
-    loadTags(modelId, onProgress, signal),
-  ]);
+  const large = info.sizeMb >= 300;
+
+  // Large / iPhone: sequential load reduces peak RAM vs Promise.all.
+  let session: ort.InferenceSession;
+  let tags: TagRow[];
+  if (large || isAppleMobileUa()) {
+    tags = await loadTags(modelId, onProgress, signal);
+    await yieldForPaint(40);
+    session = await loadSession(modelId, onProgress, signal);
+  } else {
+    [session, tags] = await Promise.all([
+      loadSession(modelId, onProgress, signal),
+      loadTags(modelId, onProgress, signal),
+    ]);
+  }
   throwIfAborted(signal);
+
   const input =
     family === "pixai"
       ? await imageToPixaiTensor(file)
@@ -836,7 +996,12 @@ async function runOneModel(
     session.inputNames.includes("input") && family === "pixai"
       ? "input"
       : session.inputNames[0];
-  const output = await session.run({ [inputName]: input });
+
+  // Only fetch prediction — skip copying embedding/logits into JS.
+  const fetches = session.outputNames.includes("prediction")
+    ? ["prediction"]
+    : [session.outputNames[0]];
+  const output = await session.run({ [inputName]: input }, fetches);
   const out = pickOutput(session, output);
   const probs = out.data as Float32Array;
 
@@ -863,8 +1028,11 @@ async function runOneModel(
   }
   results.sort((a, b) => b.score - a.score);
 
-  // Large models: free WASM ASAP so the next ensemble member (or UI) has headroom.
-  if (info.sizeMb >= 300 || isAppleMobileUa()) {
+  // Drop tensor views ASAP, then free WASM for the next model / UI.
+  out.dispose();
+  input.dispose();
+
+  if (large || isAppleMobileUa()) {
     await releaseBrowserSessions();
   }
 

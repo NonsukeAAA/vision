@@ -1,24 +1,18 @@
 import {
   useEffect,
-  useMemo,
   useRef,
   useState,
   useTransition,
   type DragEvent,
 } from "react";
 import { M3eLoadingIndicator } from "@m3e/react/loading-indicator";
-import { M3eSlider } from "@m3e/react/slider";
-import { M3eSliderThumb } from "@m3e/react/slider";
 import { M3eTheme } from "@m3e/react/theme";
 import { checkHealth, tagViaApi } from "./api";
 import {
   BROWSER_MODEL_LIST,
   BROWSER_MODELS,
-  isAppleMobileUa,
-  type BrowserModelId,
 } from "./browserModels";
 import {
-  isGitHubPagesHost,
   loadSettings,
   saveSettings,
   type AppSettings,
@@ -34,6 +28,7 @@ import {
   type LoadProgress,
 } from "./wdBrowser";
 import { forceUncensoredTags } from "./forceUncensored";
+import { SettingsPanel } from "./SettingsPanel";
 
 type Screen = "home" | "working" | "result";
 
@@ -59,8 +54,6 @@ export default function App() {
   const resultRef = useRef<HTMLElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const copyResetRef = useRef<number | null>(null);
-  const onPages = isGitHubPagesHost();
-  const onIphone = isAppleMobileUa();
   const showingResult = screen === "result" && !!result;
   const activeModel = BROWSER_MODELS[settings.browserModel];
   const runModels =
@@ -330,11 +323,6 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [file, screen, modelReady, showingResult]);
 
-  const thresholdPercent = useMemo(
-    () => Math.round(settings.threshold * 100),
-    [settings.threshold],
-  );
-
   const tagCount = editableTags.length;
   const canAnalyze = !!file && screen !== "working" && modelReady;
 
@@ -356,189 +344,12 @@ export default function App() {
         </div>
 
         {showSettings && (
-          <div className="settings">
-            <p className="section-title">設定</p>
-            {onPages && (
-              <p className="muted">
-                GitHub Pages では画像を端末内（ブラウザ）で解析します。JoyCaption
-                併用は PC で API を起動し、下のエンジンを「ローカル API」にしてください。
-              </p>
-            )}
-            <label>
-              推論エンジン
-              <select
-                value={settings.engine}
-                onChange={(e) =>
-                  setSettings((s) => ({
-                    ...s,
-                    engine: e.target.value as AppSettings["engine"],
-                  }))
-                }
-              >
-                <option value="browser">ブラウザ (WD/PixAI · 推奨 / Pages対応)</option>
-                <option value="local-api">ローカル API (JoyCaption + WD14)</option>
-              </select>
-            </label>
-            {settings.engine === "browser" && (
-              <>
-                <label>
-                  実行モード
-                  <select
-                    value={settings.tagRunMode}
-                    onChange={(e) =>
-                      setSettings((s) => ({
-                        ...s,
-                        tagRunMode: e.target.value as AppSettings["tagRunMode"],
-                      }))
-                    }
-                  >
-                    <option value="single">単体モデル</option>
-                    <option value="merge">結合（同一タグをマージ）</option>
-                  </select>
-                </label>
-                {settings.tagRunMode === "single" ? (
-                  <label>
-                    ブラウザモデル
-                    <select
-                      value={settings.browserModel}
-                      onChange={(e) => {
-                        const id = e.target.value as BrowserModelId;
-                        setSettings((s) => ({ ...s, browserModel: id }));
-                        setSnack(
-                          `${BROWSER_MODELS[id].shortLabel} に切替 · 初回は再ダウンロードあり`,
-                        );
-                      }}
-                    >
-                      {BROWSER_MODEL_LIST.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.label} · ~{m.sizeMb}MB
-                        </option>
-                      ))}
-                    </select>
-                    <span
-                      className="muted"
-                      style={{
-                        marginTop: 4,
-                        textTransform: "none",
-                        letterSpacing: "normal",
-                        fontWeight: 400,
-                      }}
-                    >
-                      {activeModel.description}
-                      {onIphone && activeModel.sizeMb >= 300
-                        ? " · メモリ不足で落ちることがあります"
-                        : ""}
-                    </span>
-                  </label>
-                ) : (
-                  <div className="ensemble-pick">
-                    <p className="section-title" style={{ fontSize: "0.9rem" }}>
-                      結合するモデル
-                    </p>
-                    <p className="muted">
-                      同じタグは1つにまとめ、スコアは最大値。複数一致は優先表示します。
-                    </p>
-                    {BROWSER_MODEL_LIST.map((m) => {
-                      const checked = settings.ensembleModels.includes(m.id);
-                      return (
-                        <label key={m.id} className="check-line">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={(e) => {
-                              setSettings((s) => {
-                                const next = e.target.checked
-                                  ? [...s.ensembleModels, m.id]
-                                  : s.ensembleModels.filter((id) => id !== m.id);
-                                return {
-                                  ...s,
-                                  ensembleModels:
-                                    next.length > 0 ? next : [s.browserModel],
-                                };
-                              });
-                            }}
-                          />
-                          {m.shortLabel}
-                          <span className="muted"> · ~{m.sizeMb}MB</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                )}
-              </>
-            )}
-            {settings.engine === "local-api" && (
-              <>
-                <p className="muted">
-                  事前に <code>./scripts/dev.sh</code> などで API
-                  を起動してください。未起動の場合は自動でブラウザ推論に戻ります。
-                </p>
-                <label>
-                  API Base URL
-                  <input
-                    type="text"
-                    value={settings.apiBase}
-                    onChange={(e) =>
-                      setSettings((s) => ({ ...s, apiBase: e.target.value }))
-                    }
-                  />
-                </label>
-              </>
-            )}
-            <label>
-              一般タグ閾値 ({thresholdPercent}%)
-              <M3eSlider
-                min={0.05}
-                max={0.95}
-                step={0.05}
-                labelled
-                onChange={(e) => {
-                  const target = e.target as HTMLElement & { value?: number | null };
-                  const thumb = (e.target as HTMLElement).querySelector?.(
-                    "m3e-slider-thumb",
-                  ) as (HTMLElement & { value: number | null }) | null;
-                  const v = Number(thumb?.value ?? target.value);
-                  if (!Number.isNaN(v)) {
-                    setSettings((s) => ({ ...s, threshold: v }));
-                  }
-                }}
-              >
-                <M3eSliderThumb value={settings.threshold} />
-              </M3eSlider>
-            </label>
-            <label>
-              <span className="check-line">
-                <input
-                  type="checkbox"
-                  checked={settings.includeRating}
-                  onChange={(e) =>
-                    setSettings((s) => ({
-                      ...s,
-                      includeRating: e.target.checked,
-                    }))
-                  }
-                />
-                rating タグを含める
-              </span>
-            </label>
-            {settings.engine === "local-api" && (
-              <label>
-                <span className="check-line">
-                  <input
-                    type="checkbox"
-                    checked={settings.enableJoy}
-                    onChange={(e) =>
-                      setSettings((s) => ({
-                        ...s,
-                        enableJoy: e.target.checked,
-                      }))
-                    }
-                  />
-                  JoyCaption を使う
-                </span>
-              </label>
-            )}
-          </div>
+          <SettingsPanel
+            settings={settings}
+            onChange={setSettings}
+            onClose={() => setShowSettings(false)}
+            onSnack={setSnack}
+          />
         )}
 
         <header className={`brand ${showingResult ? "brand-compact" : ""}`}>

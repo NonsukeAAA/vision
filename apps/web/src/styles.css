@@ -749,15 +749,211 @@ select {
   font-variant-numeric: tabular-nums;
 }
 
-.settings {
+.settings-sheet {
+  display: grid;
+  gap: var(--space-lg);
+  padding: var(--space-md) var(--space-md) var(--space-lg);
+  margin-bottom: 0;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(
+    165deg,
+    rgba(255, 255, 255, 0.92) 0%,
+    rgba(233, 238, 242, 0.88) 100%
+  );
+  border: 1px solid var(--line);
+  box-shadow: 0 18px 40px rgba(20, 24, 28, 0.08);
+  animation: rise 420ms var(--spring) both;
+}
+
+.settings-sheet-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.settings-kicker {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.settings-title {
+  margin: 2px 0 0;
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.settings-banner {
+  margin: 0;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+.settings-block {
   display: grid;
   gap: var(--space-md);
-  padding: var(--space-md);
-  margin-bottom: 0;
-  border-radius: var(--radius-sm);
+}
+
+.settings-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.settings-block-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.settings-block-title m3e-icon {
+  color: var(--accent);
+  font-size: 1.125rem;
+}
+
+.resource-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-sm);
+}
+
+@media (max-width: 560px) {
+  .resource-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.resource-card {
+  display: grid;
+  gap: 4px;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid var(--line);
+}
+
+.resource-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.resource-value {
+  font-family: var(--font-display);
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.resource-hint {
+  font-size: 0.6875rem;
+  color: var(--ink-3);
+  line-height: 1.35;
+}
+
+.storage-meter {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(20, 24, 28, 0.08);
+  overflow: hidden;
+}
+
+.storage-meter-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), #6f90b5);
+  transition: width 280ms var(--ease);
+}
+
+.cache-list {
+  border-radius: var(--radius-md);
   background: rgba(255, 255, 255, 0.7);
   border: 1px solid var(--line);
-  animation: rise 360ms var(--ease) both;
+  overflow: hidden;
+}
+
+.cache-badge {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--ink-3);
+}
+
+.cache-badge.is-empty {
+  opacity: 0.7;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.settings-field {
+  display: grid;
+  gap: var(--space-xs);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.settings-field select,
+.settings-field input[type="text"] {
+  padding: 12px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  color: var(--ink);
+  font-size: 0.875rem;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+}
+
+.settings-help {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--ink-3);
+  line-height: 1.45;
+}
+
+.settings-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: 10px 0;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.settings {
+  display: none;
 }
 
 .settings label {
