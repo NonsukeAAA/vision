@@ -142,9 +142,11 @@ export function modelOnnxUrl(id: BrowserModelId): string {
   const info = BROWSER_MODELS[id];
   if (info.modelUrl) {
     if (/^https?:\/\//i.test(info.modelUrl)) return info.modelUrl;
+    // BASE_URL is a path (e.g. "/vision/") — not a valid absolute URL for `new URL()`.
     const base = import.meta.env.BASE_URL || "/";
+    const normalizedBase = base.endsWith("/") ? base : `${base}/`;
     const path = info.modelUrl.replace(/^\//, "");
-    return new URL(path, base.endsWith("/") ? base : `${base}/`).href;
+    return `${normalizedBase}${path}`;
   }
   return `${modelHfBase(id)}/model.onnx`;
 }

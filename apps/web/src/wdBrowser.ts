@@ -353,7 +353,14 @@ async function writeOpfsMeta(
 }
 
 function resolveSiblingUrl(manifestUrl: string, name: string): string {
-  return new URL(name, manifestUrl).href;
+  // manifestUrl is path-absolute (e.g. "/vision/models/foo.json") or full URL.
+  if (/^https?:\/\//i.test(manifestUrl)) {
+    return new URL(name, manifestUrl).href;
+  }
+  const dir = manifestUrl.includes("/")
+    ? manifestUrl.slice(0, manifestUrl.lastIndexOf("/") + 1)
+    : "/";
+  return `${dir}${name.replace(/^\//, "")}`;
 }
 
 async function downloadPartsToOpfs(
