@@ -4,8 +4,9 @@
  * WD v3 family: pad-square BGR NHWC — iPhone-friendly sizes (~170–380MB).
  * PixAI v0.9: EVA02-based, RGB NCHW normalized — character / newer IP focus.
  *
- * Heavy FP32 weights are swapped for INT8 builds where needed so tabs survive
+ * Heavy FP32 weights are swapped for smaller builds where needed so tabs survive
  * InferenceSession.create (JS buffer + WASM copy ≈ 2× file size).
+ * PixAI uses FP16 (dynamic INT8 destroyed tag accuracy).
  */
 
 export type BrowserModelId =
@@ -25,7 +26,7 @@ export type BrowserModelInfo = {
   /** Hugging Face repo used for selected_tags.csv (and default model.onnx). */
   hfRepo: string;
   /**
-   * Optional ONNX / split-manifest URL override (e.g. Pages-hosted INT8).
+   * Optional ONNX / split-manifest URL override (e.g. Pages-hosted FP16).
    * Absolute `https://…` or site-relative path (resolved via {@link modelOnnxUrl}).
    * Never pass BASE_URL alone into `new URL()` — it is path-only (`/vision/`).
    */
@@ -72,14 +73,15 @@ export const BROWSER_MODELS: Record<BrowserModelId, BrowserModelInfo> = {
   "pixai-v09": {
     id: "pixai-v09",
     family: "pixai",
-    label: "PixAI Tagger v0.9 (INT8)",
+    label: "PixAI Tagger v0.9 (FP16)",
     shortLabel: "PixAI",
-    description: "キャラ・新作IPに強い · ブラウザ用 INT8（約308MB）",
-    // Tags/preprocess from deepghs; INT8 weights hosted as split parts on Pages (<100MB each).
+    description: "キャラ・新作IPに強い · ブラウザ用 FP16（約607MB）",
+    // Tags/preprocess from deepghs; FP16 weights as split parts on Pages (<100MB each).
+    // Dynamic INT8 was abandoned — top tags became unrelated characters.
     hfRepo: "deepghs/pixai-tagger-v0.9-onnx",
-    modelUrl: "models/pixai-v09-int8.json",
-    sizeMb: 308,
-    mobileFriendly: true,
+    modelUrl: "models/pixai-v09-fp16.json",
+    sizeMb: 607,
+    mobileFriendly: false,
     qualityRank: 4,
   },
 };
@@ -157,7 +159,7 @@ export function siteAssetUrl(relativePath: string): string {
   return path;
 }
 
-/** ONNX weight URL (Pages INT8 override or Hugging Face). */
+/** ONNX weight URL (Pages override or Hugging Face). */
 export function modelOnnxUrl(id: BrowserModelId): string {
   const info = BROWSER_MODELS[id];
   if (info.modelUrl) {

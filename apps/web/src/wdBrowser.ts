@@ -18,7 +18,8 @@ const TARGET = 448;
 const CACHE_PREFIX = "vision-tagger-v3";
 /** Cache API only for small assets (tags CSV). ONNX goes to OPFS. */
 const MAX_CACHE_BYTES = 8 * 1024 * 1024;
-const OPFS_DIR = "vision-models-v4";
+/** Bump when hosted weights change so a broken OPFS cache (e.g. bad INT8) is ignored. */
+const OPFS_DIR = "vision-models-v5";
 
 type TagRow = { name: string; category: number };
 export type LoadProgress = {
@@ -483,7 +484,7 @@ async function loadModelFilePersistent(
     return cached;
   }
 
-  // Split-part manifest (PixAI INT8 on Pages)
+  // Split-part manifest (PixAI FP16 on Pages; GitHub file size limit)
   if (url.endsWith(".json")) {
     const res = await fetch(url, { signal });
     if (!res.ok) throw new Error(`${label} マニフェスト取得失敗 (${res.status})`);
