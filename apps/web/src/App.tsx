@@ -71,6 +71,17 @@ export default function App() {
     saveSettings(settings);
   }, [settings]);
 
+  // Only free other models when the active selection changes — never on every render.
+  useEffect(() => {
+    if (settings.engine !== "browser") return;
+    if (settings.tagRunMode === "single") {
+      void releaseBrowserSessions(settings.browserModel);
+      return;
+    }
+    // Merge mode: drop singles so the ensemble can load members one-by-one.
+    void releaseBrowserSessions();
+  }, [settings.engine, settings.tagRunMode, settings.browserModel]);
+
   useEffect(() => {
     const ac = new AbortController();
     (async () => {
@@ -84,12 +95,6 @@ export default function App() {
           settings.tagRunMode === "merge"
             ? runModels.reduce((s, id) => s + BROWSER_MODELS[id].sizeMb, 0)
             : activeModel.sizeMb;
-        // Drop leftover main-thread sessions when the active model set changes.
-        if (settings.tagRunMode === "single") {
-          void releaseBrowserSessions(settings.browserModel);
-        } else {
-          void releaseBrowserSessions();
-        }
         setApiStatus(
           `ブラウザ推論 · ${label}（初回のみ約${sizeHint}MB · 以降は端末キャッシュ）`,
         );
@@ -97,7 +102,7 @@ export default function App() {
           .then(() => {
             if (!ac.signal.aborted) {
               setApiStatus(
-                `${label} · 解析時にモデル読込（iPhone/大型は Worker で実行）`,
+                `${label} · 解析時にモデル読込（初回のみDL・以降キャッシュ）`,
               );
               setLoadProgress(null);
             }

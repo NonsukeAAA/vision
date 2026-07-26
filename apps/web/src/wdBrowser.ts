@@ -976,10 +976,10 @@ function pickOutput(
   return output[session.outputNames[0]];
 }
 
-function useEphemeralWorker(modelId: BrowserModelId): boolean {
-  // Safari keeps WASM heaps forever in the page; Worker.terminate() is the
-  // supported way to reclaim memory (see onnxruntime#21673).
-  return BROWSER_MODELS[modelId].sizeMb >= 300 || isAppleMobileUa();
+function useEphemeralWorker(_modelId: BrowserModelId): boolean {
+  // Module Workers + onnxruntime-web crash iPhone Safari tabs on create
+  // (jetsam right when 解析 is pressed). Keep inference on the main thread.
+  return false;
 }
 
 async function ensureModelFileOnDisk(
@@ -1143,6 +1143,15 @@ async function runOneModel(
       signal,
     });
   } else {
+    if (hasWarmBrowserSession(modelId)) {
+      emit(onProgress, {
+        phase: "ready",
+        loaded: 1,
+        total: 1,
+        message: `${info.shortLabel}（セッション再利用）`,
+        modelId,
+      });
+    }
     const session = await loadSession(modelId, onProgress, signal);
     const name =
       session.inputNames.includes("input") && family === "pixai"
@@ -1181,6 +1190,10 @@ async function runOneModel(
     });
   }
   results.sort((a, b) => b.score - a.score);
+
+  // Keep the main-thread session warm for repeat analyzes. Safari does not
+  // return WASM memory after release(); recreating PixAI OOMs by the 2nd/3rd try.
+  // Only tear down when switching models (loadSession / App settings effect).
 
   return { modelId, tags: results };
 }
