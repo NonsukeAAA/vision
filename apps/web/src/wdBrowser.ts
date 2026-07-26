@@ -309,6 +309,15 @@ type OpfsModelMeta = {
   bytes: number;
   modelId: BrowserModelId;
   savedAt: number;
+  sha256?: string;
+};
+
+type PartManifest = {
+  id: string;
+  format: "parts";
+  bytes: number;
+  sha256?: string;
+  parts: { name: string; bytes: number }[];
 };
 
 async function readOpfsCachedModel(
@@ -343,9 +352,102 @@ async function writeOpfsMeta(
   await writable.close();
 }
 
+function resolveSiblingUrl(manifestUrl: string, name: string): string {
+  return new URL(name, manifestUrl).href;
+}
+
+async function downloadPartsToOpfs(
+  id: BrowserModelId,
+  manifestUrl: string,
+  manifest: PartManifest,
+  onProgress: ProgressFn | undefined,
+  label: string,
+  signal?: AbortSignal,
+): Promise<File> {
+  const dir = await opfsModelsDir();
+  const handle = await dir.getFileHandle(`${id}.onnx`, { create: true });
+  const writable = await handle.createWritable();
+  let loaded = 0;
+  try {
+    for (let i = 0; i < manifest.parts.length; i++) {
+      const part = manifest.parts[i];
+      const partUrl = resolveSiblingUrl(manifestUrl, part.name);
+      emit(onProgress, {
+        phase: "model",
+        loaded,
+        total: manifest.bytes,
+        message: `${label} 分割 ${i + 1}/${manifest.parts.length}…`,
+        modelId: id,
+      });
+      const res = await fetch(partUrl, { signal });
+      if (!res.ok) {
+        throw new Error(`${label} part${i} の取得に失敗 (${res.status})`);
+      }
+      if (!res.body) {
+        const buf = new Uint8Array(await res.arrayBuffer());
+        await writable.write(buf);
+        loaded += buf.byteLength;
+      } else {
+        const reader = res.body.getReader();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          await writable.write(value);
+          loaded += value.byteLength;
+          emit(onProgress, {
+            phase: "model",
+            loaded,
+            total: manifest.bytes,
+            message: `${label} ${Math.min(99, Math.round((loaded / manifest.bytes) * 100))}%`,
+            modelId: id,
+          });
+        }
+      }
+    }
+  } catch (err) {
+    await writable.abort().catch(() => undefined);
+    try {
+      await dir.removeEntry(`${id}.onnx`);
+    } catch {
+      // ignore
+    }
+    throw err;
+  }
+  await writable.close();
+
+  if (loaded !== manifest.bytes) {
+    try {
+      await dir.removeEntry(`${id}.onnx`);
+    } catch {
+      // ignore
+    }
+    throw new Error(
+      `${label} の結合サイズ不一致（${loaded} / ${manifest.bytes}）`,
+    );
+  }
+
+  await writeOpfsMeta(dir, id, {
+    url: manifestUrl,
+    bytes: loaded,
+    modelId: id,
+    savedAt: Date.now(),
+    sha256: manifest.sha256,
+  });
+
+  emit(onProgress, {
+    phase: "model",
+    loaded: 1,
+    total: 1,
+    message: `${label} を端末に保存しました`,
+    modelId: id,
+  });
+
+  return (await dir.getFileHandle(`${id}.onnx`)).getFile();
+}
+
 /**
  * Load ONNX from OPFS when present; otherwise stream-download into OPFS.
- * Survives reloads — no need to re-download every visit.
+ * Supports single-file URLs and split-part JSON manifests (GitHub Pages <100MB limit).
  */
 async function loadModelFilePersistent(
   id: BrowserModelId,
@@ -365,6 +467,17 @@ async function loadModelFilePersistent(
       modelId: id,
     });
     return cached;
+  }
+
+  // Split-part manifest (PixAI INT8 on Pages)
+  if (url.endsWith(".json")) {
+    const res = await fetch(url, { signal });
+    if (!res.ok) throw new Error(`${label} マニフェスト取得失敗 (${res.status})`);
+    const manifest = (await res.json()) as PartManifest;
+    if (manifest.format !== "parts" || !manifest.parts?.length) {
+      throw new Error(`${label} マニフェスト形式が不正です`);
+    }
+    return downloadPartsToOpfs(id, url, manifest, onProgress, label, signal);
   }
 
   const dir = await opfsModelsDir();

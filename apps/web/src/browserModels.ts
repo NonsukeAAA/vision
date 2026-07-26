@@ -74,9 +74,9 @@ export const BROWSER_MODELS: Record<BrowserModelId, BrowserModelInfo> = {
     label: "PixAI Tagger v0.9 (INT8)",
     shortLabel: "PixAI",
     description: "キャラ・新作IPに強い · ブラウザ用 INT8（約308MB）",
-    // Tags/preprocess from deepghs; weights are dynamic-INT8 hosted on Pages.
+    // Tags/preprocess from deepghs; INT8 weights hosted as split parts on Pages (<100MB each).
     hfRepo: "deepghs/pixai-tagger-v0.9-onnx",
-    modelUrl: "models/pixai-v09-int8.onnx",
+    modelUrl: "models/pixai-v09-int8.json",
     sizeMb: 308,
     mobileFriendly: true,
     qualityRank: 4,

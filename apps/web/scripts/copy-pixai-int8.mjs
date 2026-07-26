@@ -1,45 +1,66 @@
 #!/usr/bin/env node
 /**
- * Ensure Pages dist includes the PixAI INT8 ONNX (~308MB).
- * Prefers a local quantized file, otherwise downloads from the live Pages URL
- * (so subsequent deploys don't need to re-quantize from FP32).
+ * Ensure Pages dist includes PixAI INT8 split parts (<100MB each for GitHub).
+ * Prefers /tmp/pixai-quant/parts, else mirrors from the live site.
  */
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const webRoot = join(__dirname, "..");
 const destDir = join(webRoot, "dist", "models");
-const dest = join(destDir, "pixai-v09-int8.onnx");
-const candidates = [
-  process.env.PIXAI_INT8_ONNX,
-  "/tmp/pixai-quant/model-int8.onnx",
-  join(webRoot, "public", "models", "pixai-v09-int8.onnx"),
-].filter(Boolean);
+const localPartsDir = "/tmp/pixai-quant/parts";
+const remoteBase =
+  process.env.PIXAI_INT8_BASE ||
+  "https://nonsukeaaa.github.io/vision/models";
 
 mkdirSync(destDir, { recursive: true });
 
-const local = candidates.find((p) => p && existsSync(p));
-if (local) {
-  console.log(`[copy-pixai-int8] copying ${local} -> ${dest}`);
-  copyFileSync(local, dest);
-  process.exit(0);
-}
-
-const remote =
-  process.env.PIXAI_INT8_URL ||
-  "https://nonsukeaaa.github.io/vision/models/pixai-v09-int8.onnx";
-
-console.log(`[copy-pixai-int8] fetching ${remote}`);
-const res = await fetch(remote);
-if (!res.ok) {
-  console.error(
-    `[copy-pixai-int8] missing local INT8 and remote fetch failed (${res.status}).`,
+function copyLocalParts() {
+  if (!existsSync(localPartsDir)) return false;
+  const files = readdirSync(localPartsDir).filter(
+    (f) => f.startsWith("pixai-v09-int8"),
   );
-  process.exit(1);
+  if (!files.includes("pixai-v09-int8.json")) return false;
+  for (const f of files) {
+    copyFileSync(join(localPartsDir, f), join(destDir, f));
+  }
+  console.log(`[copy-pixai-int8] copied ${files.length} files from ${localPartsDir}`);
+  return true;
 }
-const buf = Buffer.from(await res.arrayBuffer());
-const { writeFileSync } = await import("node:fs");
-writeFileSync(dest, buf);
-console.log(`[copy-pixai-int8] wrote ${dest} (${(buf.length / 1e6).toFixed(1)} MB)`);
+
+async function mirrorRemote() {
+  const manifestUrl = `${remoteBase}/pixai-v09-int8.json`;
+  console.log(`[copy-pixai-int8] fetching manifest ${manifestUrl}`);
+  const res = await fetch(manifestUrl);
+  if (!res.ok) {
+    throw new Error(`manifest fetch failed (${res.status})`);
+  }
+  const manifest = await res.json();
+  writeFileSync(join(destDir, "pixai-v09-int8.json"), JSON.stringify(manifest));
+  for (const part of manifest.parts) {
+    const url = `${remoteBase}/${part.name}`;
+    console.log(`[copy-pixai-int8] fetching ${url}`);
+    const partRes = await fetch(url);
+    if (!partRes.ok) throw new Error(`${part.name} fetch failed (${partRes.status})`);
+    const buf = Buffer.from(await partRes.arrayBuffer());
+    writeFileSync(join(destDir, part.name), buf);
+  }
+  console.log(`[copy-pixai-int8] mirrored ${manifest.parts.length} parts`);
+}
+
+if (!copyLocalParts()) {
+  try {
+    await mirrorRemote();
+  } catch (err) {
+    console.error("[copy-pixai-int8]", err);
+    process.exit(1);
+  }
+}
