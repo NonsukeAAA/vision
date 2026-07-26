@@ -1,4 +1,4 @@
-import * as ort from "onnxruntime-web/webgpu";
+import * as ort from "onnxruntime-web/wasm";
 import type { TagScore } from "./types";
 import { forceUncensoredTags } from "./forceUncensored";
 import {
@@ -20,8 +20,11 @@ const TARGET = 448;
 const CACHE_PREFIX = "vision-tagger-v3";
 /** Cache API only for small assets (tags CSV). ONNX goes to OPFS. */
 const MAX_CACHE_BYTES = 8 * 1024 * 1024;
-/** Bump when hosted weights or load strategy change. */
-const OPFS_DIR = "vision-models-v6";
+/**
+ * Bump when hosted weights or ORT backend change.
+ * v7: back to plain WASM (WebGPU/asyncify shared-memory path was unstable on iPhone Pages).
+ */
+const OPFS_DIR = "vision-models-v7";
 
 type OpfsModelMeta = {
   url: string;
@@ -132,10 +135,25 @@ async function yieldForPaint(ms = 50): Promise<void> {
 }
 
 let webGpuChecked: boolean | null = null;
+/**
+ * WebGPU EP needs the asyncify/jsep build (SharedArrayBuffer).
+ * GitHub Pages is not crossOriginIsolated, so prefer plain WASM there —
+ * modern iPhone Safari can use a multi‑GB JS/WASM heap with the normal build.
+ */
 async function webGpuAvailable(): Promise<boolean> {
   if (webGpuChecked != null) return webGpuChecked;
   try {
-    const nav = navigator as Navigator & { gpu?: { requestAdapter: () => Promise<unknown> } };
+    if (typeof crossOriginIsolated !== "undefined" && !crossOriginIsolated) {
+      webGpuChecked = false;
+      return false;
+    }
+    if (typeof SharedArrayBuffer === "undefined") {
+      webGpuChecked = false;
+      return false;
+    }
+    const nav = navigator as Navigator & {
+      gpu?: { requestAdapter: () => Promise<unknown> };
+    };
     if (!nav.gpu) {
       webGpuChecked = false;
       return false;
@@ -271,15 +289,11 @@ function cacheName(id: BrowserModelId): string {
 
 function configureOrtWasm() {
   if (wasmConfigured) return;
-  // Leave wasmPaths to the Vite-bundled asset (WebGPU uses asyncify/jsep builds).
-  // Overwriting with a CDN path can load the wrong .wasm and break session create.
-  // Pages is not crossOriginIsolated — multi-thread WASM breaks on Safari.
+  // Leave wasmPaths to the Vite-bundled asset so JS and .wasm stay matched.
+  // Pages is not crossOriginIsolated — keep single-threaded WASM.
   ort.env.wasm.numThreads = 1;
   ort.env.wasm.proxy = false;
-  // Avoid brittle SIMD feature probes on some Safari builds.
-  if (isAppleMobileUa()) {
-    ort.env.wasm.simd = false;
-  }
+  // Modern Safari has WASM SIMD; forcing false only slowed loads.
   wasmConfigured = true;
 }
 
@@ -711,14 +725,16 @@ async function createSessionFromBytesOrFile(
   signal?: AbortSignal,
 ): Promise<ort.InferenceSession> {
   throwIfAborted(signal);
+  // Plain WASM build: reliable on iPhone Safari with multi-GB heaps.
+  // WebGPU EP is only used when the page is crossOriginIsolated (not on Pages).
   const preferWebGpu = await webGpuAvailable();
   const executionProviders: ort.InferenceSession.SessionOptions["executionProviders"] =
     preferWebGpu ? ["webgpu", "wasm"] : ["wasm"];
 
   const options: ort.InferenceSession.SessionOptions = {
     executionProviders,
-    // Large models: skip heavy opts that spike RAM; keep basic so unused outputs can fold.
-    graphOptimizationLevel: large ? "basic" : "all",
+    // Large models: avoid heavy graph opts that spike peak RAM during init.
+    graphOptimizationLevel: large ? "disabled" : "basic",
     enableCpuMemArena: false,
     enableMemPattern: false,
     executionMode: "sequential",
@@ -804,7 +820,7 @@ async function loadSession(
         loaded: 1,
         total: 1,
         message: large
-          ? `${info.shortLabel} 初期化中（${usingGpu ? "WebGPU" : "WASM"} · メモリを多く使います）…`
+          ? `${info.shortLabel} 初期化中（${usingGpu ? "WebGPU" : "WASM"}）…`
           : `${info.shortLabel} ONNX 初期化中…`,
         modelId,
       });

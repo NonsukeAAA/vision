@@ -55,11 +55,13 @@ export async function getDeviceResourceInfo(): Promise<DeviceResourceInfo> {
   }
 
   let webGpu = false;
+  const isolated =
+    typeof crossOriginIsolated !== "undefined" && crossOriginIsolated;
   const gpu = nav
     ? (nav as Navigator & { gpu?: { requestAdapter: () => Promise<unknown> } })
         .gpu
     : undefined;
-  if (gpu) {
+  if (isolated && typeof SharedArrayBuffer !== "undefined" && gpu) {
     try {
       const adapter = await gpu.requestAdapter();
       webGpu = !!adapter;

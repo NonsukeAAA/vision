@@ -75,7 +75,7 @@ export const BROWSER_MODELS: Record<BrowserModelId, BrowserModelInfo> = {
     family: "pixai",
     label: "PixAI Tagger v0.9 (FP16)",
     shortLabel: "PixAI",
-    description: "キャラ・新作IPに強い · FP16（約607MB）· WebGPU優先",
+    description: "キャラ・新作IPに強い · FP16（約607MB）",
     // Tags/preprocess from deepghs; FP16 weights as split parts on Pages (<100MB each).
     // Dynamic INT8 was abandoned — top tags became unrelated characters.
     hfRepo: "deepghs/pixai-tagger-v0.9-onnx",

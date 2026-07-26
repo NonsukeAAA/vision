@@ -141,9 +141,13 @@ export function SettingsPanel({
             <strong className="resource-value">
               {resources?.deviceMemoryGb != null
                 ? `約 ${resources.deviceMemoryGb} GB`
-                : "取得不可"}
+                : "端末依存"}
             </strong>
-            <span className="resource-hint">navigator.deviceMemory</span>
+            <span className="resource-hint">
+              {resources?.deviceMemoryGb != null
+                ? "navigator.deviceMemory"
+                : "Safari は最大数GBヒープまで確保可"}
+            </span>
           </div>
           <div className="resource-card">
             <span className="resource-label">空きストレージ</span>
@@ -156,13 +160,14 @@ export function SettingsPanel({
             </span>
           </div>
           <div className="resource-card">
-            <span className="resource-label">加速</span>
+            <span className="resource-label">推論バックエンド</span>
             <strong className="resource-value">
               {resources?.webGpu ? "WebGPU" : "WASM"}
             </strong>
             <span className="resource-hint">
               OPFS {resources?.opfs ? "可" : "不可"}
               {resources?.persisted ? " · 永続化済" : ""}
+              {!resources?.webGpu ? " · Pages は WASM" : ""}
             </span>
           </div>
         </div>
