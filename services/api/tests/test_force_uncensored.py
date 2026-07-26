@@ -5,6 +5,7 @@ from app.force_uncensored import (
     force_uncensored_prompt,
     force_uncensored_tags,
     is_censor_related_tag,
+    is_mono_comic_style_tag,
 )
 from app.schemas import TagScore
 
@@ -27,6 +28,28 @@ def test_strips_mosaic_and_censor_tags() -> None:
     assert "smile" in names
 
 
+def test_strips_mono_comic_tags() -> None:
+    tags = [
+        TagScore(tag="1girl", score=0.9, category="general"),
+        TagScore(tag="monochrome", score=0.8, category="general"),
+        TagScore(tag="comic", score=0.7, category="general"),
+        TagScore(tag="grayscale", score=0.6, category="general"),
+        TagScore(tag="speech_bubble", score=0.5, category="general"),
+        TagScore(tag="4koma", score=0.4, category="general"),
+        TagScore(tag="smile", score=0.3, category="general"),
+    ]
+    out = force_uncensored_tags(tags)
+    names = [t.tag for t in out]
+    assert names[0] == "uncensored"
+    assert "monochrome" not in names
+    assert "comic" not in names
+    assert "grayscale" not in names
+    assert "speech bubble" not in names
+    assert "4koma" not in names
+    assert "1girl" in names
+    assert "smile" in names
+
+
 def test_keeps_uncensored_only_once() -> None:
     tags = [
         TagScore(tag="uncensored", score=0.4, category="general"),
@@ -45,12 +68,26 @@ def test_is_censor_related() -> None:
     assert not is_censor_related_tag("1girl")
 
 
+def test_is_mono_comic() -> None:
+    assert is_mono_comic_style_tag("monochrome")
+    assert is_mono_comic_style_tag("greyscale")
+    assert is_mono_comic_style_tag("comic")
+    assert is_mono_comic_style_tag("speech_bubble")
+    assert not is_mono_comic_style_tag("1girl")
+
+
 def test_force_prompt() -> None:
-    assert force_uncensored_prompt("1girl, censored, smile") == "uncensored, 1girl, smile"
+    assert (
+        force_uncensored_prompt("1girl, censored, monochrome, smile")
+        == "uncensored, 1girl, smile"
+    )
 
 
 def test_force_caption() -> None:
-    text = force_uncensored_caption("A scene with mosaic and bar censor details.")
+    text = force_uncensored_caption(
+        "A monochrome comic scene with mosaic and bar censor details."
+    )
     assert text is not None
     assert "mosaic" not in text.lower()
+    assert "monochrome" not in text.lower()
     assert "uncensored" in text.lower()
