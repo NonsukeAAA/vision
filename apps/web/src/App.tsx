@@ -608,7 +608,7 @@ export default function App() {
                           disabled={blocked}
                           title={
                             blocked
-                              ? "iPhone では非推奨（約1.2GB）"
+                              ? `iPhone では非推奨（約${m.sizeMb}MB・初期化で落ちやすい）`
                               : `${m.label} · 約${m.sizeMb}MB`
                           }
                           onClick={() => {
@@ -642,7 +642,7 @@ export default function App() {
                           disabled={blocked}
                           title={
                             blocked
-                              ? "iPhone では非推奨（約1.2GB）"
+                              ? `iPhone では非推奨（約${m.sizeMb}MB・初期化で落ちやすい）`
                               : m.description
                           }
                           onClick={() => {

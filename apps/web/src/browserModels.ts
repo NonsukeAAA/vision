@@ -54,10 +54,11 @@ export const BROWSER_MODELS: Record<BrowserModelId, BrowserModelInfo> = {
     family: "wd-v3",
     label: "WD SwinV2 Tagger v3",
     shortLabel: "SwinV2",
-    description: "高精度寄り · 初回DLが重い（約446MB）",
+    description: "高精度寄り · 約446MB · 初期化にメモリ多め · PC推奨",
     hfRepo: "SmilingWolf/wd-swinv2-tagger-v3",
     sizeMb: 446,
-    mobileFriendly: true,
+    // ~446MB JS + WASM copy ≈ 900MB+ peak — Safari / iPhone tabs get killed at init
+    mobileFriendly: false,
     qualityRank: 3,
   },
   "pixai-v09": {

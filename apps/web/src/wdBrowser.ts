@@ -74,6 +74,30 @@ export function clearBrowserModelRuntime(id?: BrowserModelId) {
   runtimes.clear();
 }
 
+/** Free WASM sessions so a large model can initialize without OOM-killing the tab. */
+export async function releaseBrowserSessions(
+  except?: BrowserModelId,
+): Promise<void> {
+  const jobs: Promise<void>[] = [];
+  for (const [id, rt] of runtimes) {
+    if (except && id === except) continue;
+    const pending = rt.sessionPromise;
+    if (!pending) continue;
+    rt.sessionPromise = null;
+    jobs.push(
+      (async () => {
+        try {
+          const session = await pending;
+          await session.release();
+        } catch {
+          // ignore — session may have failed to load
+        }
+      })(),
+    );
+  }
+  await Promise.all(jobs);
+}
+
 export function formatModelLoadError(err: unknown): string {
   if (err instanceof DOMException && err.name === "AbortError") {
     return "ダウンロードを中断しました";
@@ -233,7 +257,6 @@ async function fetchWithProgress(
       });
     }
     if (offset < total) {
-      // Truncated stream — use what we got only if substantially complete
       throw new Error(
         `${label} のダウンロードが途中で切れました（${(offset / 1e6).toFixed(1)}/${(total / 1e6).toFixed(1)} MB）`,
       );
@@ -268,6 +291,202 @@ async function fetchWithProgress(
   const exact = merged.subarray(0, offset);
   void cachePutBytes(id, url, exact, "application/octet-stream");
   return exact;
+}
+
+function opfsSupported(): boolean {
+  return typeof navigator !== "undefined" && !!navigator.storage?.getDirectory;
+}
+
+/**
+ * Stream ONNX to Origin Private File System so we don't keep a ~450MB
+ * Uint8Array alive while ORT copies it into the WASM heap (tab killer).
+ */
+async function fetchModelToOpfs(
+  id: BrowserModelId,
+  url: string,
+  onProgress: ProgressFn | undefined,
+  label: string,
+  signal?: AbortSignal,
+): Promise<File> {
+  const root = await navigator.storage.getDirectory();
+  const dir = await root.getDirectoryHandle("vision-models", { create: true });
+  const fileName = `${id}.onnx`;
+  const handle = await dir.getFileHandle(fileName, { create: true });
+
+  const res = await fetch(url, { signal });
+  if (!res.ok) throw new Error(`${label}の取得に失敗 (${res.status})`);
+  if (!res.body) {
+    const buf = await res.arrayBuffer();
+    const writable = await handle.createWritable();
+    await writable.write(buf);
+    await writable.close();
+    return handle.getFile();
+  }
+
+  const total = Number(res.headers.get("content-length") || 0);
+  const writable = await handle.createWritable();
+  const reader = res.body.getReader();
+  let loaded = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      await writable.write(value);
+      loaded += value.byteLength;
+      emit(onProgress, {
+        phase: "model",
+        loaded,
+        total: total || loaded,
+        message:
+          total > 0
+            ? `${label} ${Math.min(99, Math.round((loaded / total) * 100))}%`
+            : `${label} ${(loaded / 1e6).toFixed(1)} MB`,
+        modelId: id,
+      });
+    }
+  } finally {
+    await writable.close();
+  }
+
+  if (total > 0 && loaded < total) {
+    throw new Error(
+      `${label} のダウンロードが途中で切れました（${(loaded / 1e6).toFixed(1)}/${(total / 1e6).toFixed(1)} MB）`,
+    );
+  }
+  return handle.getFile();
+}
+
+async function createSessionFromBytesOrFile(
+  source: Uint8Array | File,
+  large: boolean,
+  signal?: AbortSignal,
+): Promise<ort.InferenceSession> {
+  throwIfAborted(signal);
+  const options: ort.InferenceSession.SessionOptions = {
+    executionProviders: ["wasm"],
+    // Avoid heavy graph opts that spike RAM on top of the model copy.
+    graphOptimizationLevel: large ? "basic" : "all",
+    enableCpuMemArena: false,
+    enableMemPattern: false,
+  };
+
+  if (source instanceof File) {
+    const objectUrl = URL.createObjectURL(source);
+    try {
+      // ORT fetches the blob; our JS heap no longer holds a duplicate Uint8Array.
+      return await ort.InferenceSession.create(objectUrl, options);
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+  return ort.InferenceSession.create(source, options);
+}
+
+async function loadSession(
+  modelId: BrowserModelId,
+  onProgress?: ProgressFn,
+  signal?: AbortSignal,
+): Promise<ort.InferenceSession> {
+  const rt = getRuntime(modelId);
+  if (!rt.sessionPromise) {
+    rt.sessionPromise = (async () => {
+      configureOrtWasm();
+      const info = BROWSER_MODELS[modelId];
+      const modelUrl = `${modelHfBase(modelId)}/model.onnx`;
+      const large = info.sizeMb >= 400;
+      const useOpfs = large && opfsSupported();
+
+      // Large ONNX needs ~2× size in memory (buffer + WASM heap). Evict others first.
+      if (large || isAppleMobileUa()) {
+        emit(onProgress, {
+          phase: "init",
+          loaded: 0,
+          total: 1,
+          message: "メモリ確保のため他モデルを解放中…",
+          modelId,
+        });
+        await releaseBrowserSessions(modelId);
+      }
+
+      emit(onProgress, {
+        phase: "model",
+        loaded: 0,
+        total: 1,
+        message: `${info.shortLabel} をダウンロード中（初回のみ・約${info.sizeMb}MB）…`,
+        modelId,
+      });
+
+      let source: Uint8Array | File;
+      if (useOpfs) {
+        source = await fetchModelToOpfs(
+          modelId,
+          modelUrl,
+          onProgress,
+          info.shortLabel,
+          signal,
+        );
+      } else {
+        source = await fetchWithProgress(
+          modelId,
+          modelUrl,
+          onProgress,
+          info.shortLabel,
+          signal,
+        );
+      }
+      throwIfAborted(signal);
+
+      emit(onProgress, {
+        phase: "init",
+        loaded: 1,
+        total: 1,
+        message: large
+          ? `${info.shortLabel} 初期化中（メモリを多く使います）…`
+          : `${info.shortLabel} ONNX 初期化中…`,
+        modelId,
+      });
+
+      // Let the progress UI paint before the blocking WASM alloc (often kills Safari).
+      await new Promise<void>((r) => {
+        requestAnimationFrame(() => setTimeout(r, 40));
+      });
+      throwIfAborted(signal);
+
+      try {
+        const session = await createSessionFromBytesOrFile(
+          source,
+          large,
+          signal,
+        );
+        emit(onProgress, {
+          phase: "ready",
+          loaded: 1,
+          total: 1,
+          message: `${info.shortLabel} 準備完了`,
+          modelId,
+        });
+        return session;
+      } catch (err) {
+        throw new Error(
+          `${formatModelLoadError(err)}（${info.shortLabel}は ViT / ConvNeXt より重いです）`,
+        );
+      }
+    })().catch((err) => {
+      rt.sessionPromise = null;
+      emit(onProgress, {
+        phase: "error",
+        loaded: 0,
+        total: 0,
+        message: formatModelLoadError(err),
+        modelId,
+      });
+      throw err;
+    });
+  }
+
+  const session = await rt.sessionPromise;
+  throwIfAborted(signal);
+  return session;
 }
 
 async function loadTags(
@@ -318,69 +537,6 @@ async function loadTags(
   const tags = await rt.tagsPromise;
   throwIfAborted(signal);
   return tags;
-}
-
-async function loadSession(
-  modelId: BrowserModelId,
-  onProgress?: ProgressFn,
-  signal?: AbortSignal,
-): Promise<ort.InferenceSession> {
-  const rt = getRuntime(modelId);
-  if (!rt.sessionPromise) {
-    rt.sessionPromise = (async () => {
-      configureOrtWasm();
-      const info = BROWSER_MODELS[modelId];
-      const modelUrl = `${modelHfBase(modelId)}/model.onnx`;
-      emit(onProgress, {
-        phase: "model",
-        loaded: 0,
-        total: 1,
-        message: `${info.shortLabel} をダウンロード中（初回のみ・約${info.sizeMb}MB）…`,
-        modelId,
-      });
-      const modelBytes = await fetchWithProgress(
-        modelId,
-        modelUrl,
-        onProgress,
-        info.shortLabel,
-        signal,
-      );
-      emit(onProgress, {
-        phase: "init",
-        loaded: 1,
-        total: 1,
-        message: `${info.shortLabel} ONNX 初期化中…`,
-        modelId,
-      });
-
-      // Pass Uint8Array directly — avoid an extra full copy.
-      const session = await ort.InferenceSession.create(modelBytes, {
-        executionProviders: ["wasm"],
-      });
-      emit(onProgress, {
-        phase: "ready",
-        loaded: 1,
-        total: 1,
-        message: `${info.shortLabel} 準備完了`,
-        modelId,
-      });
-      return session;
-    })().catch((err) => {
-      rt.sessionPromise = null;
-      emit(onProgress, {
-        phase: "error",
-        loaded: 0,
-        total: 0,
-        message: formatModelLoadError(err),
-        modelId,
-      });
-      throw err;
-    });
-  }
-
-  const session = await rt.sessionPromise;
-  throwIfAborted(signal);
-  return session;
 }
 
 /** WD v3: white-pad square, BGR NHWC 0–255 float */
@@ -453,6 +609,7 @@ async function runOneModel(
 ): Promise<TaggedByModel> {
   activeModelId = modelId;
   const family = BROWSER_MODELS[modelId].family;
+  const info = BROWSER_MODELS[modelId];
   const [session, tags] = await Promise.all([
     loadSession(modelId, onProgress, signal),
     loadTags(modelId, onProgress, signal),
@@ -492,6 +649,12 @@ async function runOneModel(
     });
   }
   results.sort((a, b) => b.score - a.score);
+
+  // Large models: free WASM ASAP so the next ensemble member (or UI) has headroom.
+  if (info.sizeMb >= 400 || isAppleMobileUa()) {
+    await releaseBrowserSessions();
+  }
+
   return { modelId, tags: results };
 }
 
