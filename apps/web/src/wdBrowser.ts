@@ -365,7 +365,7 @@ async function createSessionFromBytesOrFile(
   const options: ort.InferenceSession.SessionOptions = {
     executionProviders: ["wasm"],
     // Avoid heavy graph opts that spike RAM on top of the model copy.
-    graphOptimizationLevel: large ? "basic" : "all",
+    graphOptimizationLevel: large ? "disabled" : "basic",
     enableCpuMemArena: false,
     enableMemPattern: false,
   };
@@ -393,7 +393,7 @@ async function loadSession(
       configureOrtWasm();
       const info = BROWSER_MODELS[modelId];
       const modelUrl = `${modelHfBase(modelId)}/model.onnx`;
-      const large = info.sizeMb >= 400;
+      const large = info.sizeMb >= 300;
       const useOpfs = large && opfsSupported();
 
       // Large ONNX needs ~2× size in memory (buffer + WASM heap). Evict others first.
@@ -651,7 +651,7 @@ async function runOneModel(
   results.sort((a, b) => b.score - a.score);
 
   // Large models: free WASM ASAP so the next ensemble member (or UI) has headroom.
-  if (info.sizeMb >= 400 || isAppleMobileUa()) {
+  if (info.sizeMb >= 300 || isAppleMobileUa()) {
     await releaseBrowserSessions();
   }
 

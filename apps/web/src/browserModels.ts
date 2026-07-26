@@ -1,9 +1,12 @@
 /**
  * Browser ONNX taggers for vision.
  *
- * WD v3 family: pad-square BGR NHWC — iPhone-friendly sizes (~360–450MB).
+ * WD v3 family: pad-square BGR NHWC — iPhone-friendly sizes (~170–380MB).
  * PixAI v0.9: EVA02-based, RGB NCHW normalized — stronger characters / newer IPs,
  * but ~1.2GB (PC / high-memory only; may fail on iPhone Safari).
+ *
+ * Note: FP32 SwinV2 (~446MB) OOMs at InferenceSession.create in most browsers;
+ * we ship the public INT8 build instead (~167MB).
  */
 
 export type BrowserModelId =
@@ -52,13 +55,13 @@ export const BROWSER_MODELS: Record<BrowserModelId, BrowserModelInfo> = {
   "wd-swinv2-v3": {
     id: "wd-swinv2-v3",
     family: "wd-v3",
-    label: "WD SwinV2 Tagger v3",
+    label: "WD SwinV2 Tagger v3 (INT8)",
     shortLabel: "SwinV2",
-    description: "高精度寄り · 約446MB · 初期化にメモリ多め · PC推奨",
-    hfRepo: "SmilingWolf/wd-swinv2-tagger-v3",
-    sizeMb: 446,
-    // ~446MB JS + WASM copy ≈ 900MB+ peak — Safari / iPhone tabs get killed at init
-    mobileFriendly: false,
+    description: "高精度寄り · ブラウザ用 INT8（約167MB）",
+    // Full FP32 (~446MB) kills tabs at init (JS+WASM ≈900MB). Use public INT8 build.
+    hfRepo: "KidiXDev/wd-swinv2-tagger-v3-quint8",
+    sizeMb: 167,
+    mobileFriendly: true,
     qualityRank: 3,
   },
   "pixai-v09": {
