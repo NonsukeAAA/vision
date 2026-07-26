@@ -22,7 +22,6 @@ import {
 } from "./types";
 import {
   formatModelLoadError,
-  hasWarmBrowserSession,
   preloadBrowserTags,
   releaseBrowserSessions,
   tagEnsembleInBrowser,
@@ -85,27 +84,20 @@ export default function App() {
           settings.tagRunMode === "merge"
             ? runModels.reduce((s, id) => s + BROWSER_MODELS[id].sizeMb, 0)
             : activeModel.sizeMb;
-        // Drop sessions for models we are not about to use (Safari WASM is sticky).
-        const keep =
-          settings.tagRunMode === "merge" ? undefined : settings.browserModel;
+        // Drop leftover main-thread sessions when the active model set changes.
         if (settings.tagRunMode === "single") {
-          void releaseBrowserSessions(keep);
+          void releaseBrowserSessions(settings.browserModel);
+        } else {
+          void releaseBrowserSessions();
         }
-        const warm =
-          settings.tagRunMode === "single" &&
-          hasWarmBrowserSession(settings.browserModel);
         setApiStatus(
-          warm
-            ? `ブラウザ推論 · ${label}（セッション準備済 · 追加DLなし）`
-            : `ブラウザ推論 · ${label}（初回のみ約${sizeHint}MB · 以降は端末キャッシュ）`,
+          `ブラウザ推論 · ${label}（初回のみ約${sizeHint}MB · 以降は端末キャッシュ）`,
         );
         void preloadBrowserTags(runModels, onWdProgress, ac.signal)
           .then(() => {
             if (!ac.signal.aborted) {
               setApiStatus(
-                warm
-                  ? `${label} · すぐ解析できます`
-                  : `${label} · 解析時にモデル読込（初回のみDL・以降キャッシュ）`,
+                `${label} · 解析時にモデル読込（iPhone/大型は Worker で実行）`,
               );
               setLoadProgress(null);
             }

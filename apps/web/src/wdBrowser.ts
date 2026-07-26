@@ -22,9 +22,12 @@ const CACHE_PREFIX = "vision-tagger-v3";
 const MAX_CACHE_BYTES = 8 * 1024 * 1024;
 /**
  * Bump when hosted weights or ORT backend change.
- * v7: back to plain WASM (WebGPU/asyncify shared-memory path was unstable on iPhone Pages).
+ * v7: plain WASM; large models run in an ephemeral Worker that is terminated
+ * after each inference so Safari can reclaim WebAssembly.Memory.
  */
 const OPFS_DIR = "vision-models-v7";
+
+export const BROWSER_OPFS_DIR = OPFS_DIR;
 
 type OpfsModelMeta = {
   url: string;
@@ -973,6 +976,110 @@ function pickOutput(
   return output[session.outputNames[0]];
 }
 
+function useEphemeralWorker(modelId: BrowserModelId): boolean {
+  // Safari keeps WASM heaps forever in the page; Worker.terminate() is the
+  // supported way to reclaim memory (see onnxruntime#21673).
+  return BROWSER_MODELS[modelId].sizeMb >= 300 || isAppleMobileUa();
+}
+
+async function ensureModelFileOnDisk(
+  modelId: BrowserModelId,
+  onProgress?: ProgressFn,
+  signal?: AbortSignal,
+): Promise<void> {
+  const info = BROWSER_MODELS[modelId];
+  const modelUrl = modelOnnxUrl(modelId);
+  if (!opfsSupported()) {
+    throw new Error(
+      `${info.shortLabel} には端末ストレージ（OPFS）が必要です`,
+    );
+  }
+  await loadModelFilePersistent(
+    modelId,
+    modelUrl,
+    onProgress,
+    info.shortLabel,
+    signal,
+  );
+}
+
+function inferInEphemeralWorker(opts: {
+  modelId: BrowserModelId;
+  inputName: string;
+  dims: number[];
+  input: Float32Array;
+  large: boolean;
+  onProgress?: ProgressFn;
+  signal?: AbortSignal;
+}): Promise<Float32Array> {
+  const { modelId, inputName, dims, input, large, onProgress, signal } = opts;
+  return new Promise<Float32Array>((resolve, reject) => {
+    let settled = false;
+    const worker = new Worker(
+      new URL("./tagger.worker.ts", import.meta.url),
+      { type: "module" },
+    );
+
+    const finish = (err?: Error, probs?: Float32Array) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      try {
+        worker.terminate();
+      } catch {
+        // ignore
+      }
+      if (err) reject(err);
+      else resolve(probs!);
+    };
+
+    const onAbort = () => {
+      finish(new DOMException("Aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+
+    worker.onmessage = (
+      ev: MessageEvent<
+        | { type: "progress"; message: string }
+        | { type: "ok"; probs: Float32Array }
+        | { type: "error"; message: string }
+      >,
+    ) => {
+      const data = ev.data;
+      if (data.type === "progress") {
+        emit(onProgress, {
+          phase: "init",
+          loaded: 1,
+          total: 1,
+          message: data.message,
+          modelId,
+        });
+        return;
+      }
+      if (data.type === "ok") {
+        finish(undefined, data.probs);
+        return;
+      }
+      finish(new Error(data.message || "Worker 推論に失敗しました"));
+    };
+    worker.onerror = (ev) => {
+      finish(new Error(ev.message || "Worker が異常終了しました"));
+    };
+
+    // Transfer the input buffer so the main thread does not retain a copy.
+    const payload = {
+      type: "infer" as const,
+      modelId,
+      opfsDir: OPFS_DIR,
+      inputName,
+      dims,
+      input,
+      large,
+    };
+    worker.postMessage(payload, [input.buffer]);
+  });
+}
+
 async function runOneModel(
   file: File,
   modelId: BrowserModelId,
@@ -988,51 +1095,69 @@ async function runOneModel(
   const family = BROWSER_MODELS[modelId].family;
   const info = BROWSER_MODELS[modelId];
   const large = info.sizeMb >= 300;
-  const warm = hasWarmBrowserSession(modelId);
+  const ephemeral = useEphemeralWorker(modelId);
 
-  // Large / iPhone: sequential load reduces peak RAM vs Promise.all.
-  let session: ort.InferenceSession;
-  let tags: TagRow[];
-  if (large || isAppleMobileUa()) {
-    tags = await loadTags(modelId, onProgress, signal);
-    await yieldForPaint(40);
-    if (warm) {
-      emit(onProgress, {
-        phase: "ready",
-        loaded: 1,
-        total: 1,
-        message: `${info.shortLabel}（セッション再利用）`,
-        modelId,
-      });
-    }
-    session = await loadSession(modelId, onProgress, signal);
-  } else {
-    [session, tags] = await Promise.all([
-      loadSession(modelId, onProgress, signal),
-      loadTags(modelId, onProgress, signal),
-    ]);
-  }
+  const tags = await loadTags(modelId, onProgress, signal);
   throwIfAborted(signal);
 
-  const input =
+  // Free any main-thread sessions before a heavy Worker run.
+  if (ephemeral) {
+    emit(onProgress, {
+      phase: "init",
+      loaded: 0,
+      total: 1,
+      message: "メモリ確保のためセッションを解放中…",
+      modelId,
+    });
+    await releaseBrowserSessions();
+    void requestPersistentStorage();
+    await yieldForPaint(80);
+    await ensureModelFileOnDisk(modelId, onProgress, signal);
+  }
+
+  const inputTensor =
     family === "pixai"
       ? await imageToPixaiTensor(file)
       : await imageToWdTensor(file);
-  const inputName =
-    session.inputNames.includes("input") && family === "pixai"
-      ? "input"
-      : session.inputNames[0];
+  const dims = [...inputTensor.dims].map(Number);
+  const inputData = Float32Array.from(inputTensor.data as Float32Array);
+  inputTensor.dispose();
 
-  // Only fetch prediction — skip copying embedding/logits into JS.
-  const fetches = session.outputNames.includes("prediction")
-    ? ["prediction"]
-    : [session.outputNames[0]];
-  const output = await session.run({ [inputName]: input }, fetches);
-  const out = pickOutput(session, output);
-  // Copy off WASM heap before disposing tensors / any later session teardown.
-  const probs = Float32Array.from(out.data as Float32Array);
-  out.dispose();
-  input.dispose();
+  let probs: Float32Array;
+
+  if (ephemeral) {
+    emit(onProgress, {
+      phase: "init",
+      loaded: 1,
+      total: 1,
+      message: `${info.shortLabel} を Worker で実行（終了後にメモリ解放）…`,
+      modelId,
+    });
+    probs = await inferInEphemeralWorker({
+      modelId,
+      inputName: family === "pixai" ? "input" : "auto",
+      dims,
+      input: inputData,
+      large,
+      onProgress,
+      signal,
+    });
+  } else {
+    const session = await loadSession(modelId, onProgress, signal);
+    const name =
+      session.inputNames.includes("input") && family === "pixai"
+        ? "input"
+        : session.inputNames[0];
+    const tensor = new ort.Tensor("float32", inputData, dims);
+    const fetches = session.outputNames.includes("prediction")
+      ? ["prediction"]
+      : [session.outputNames[0]];
+    const output = await session.run({ [name]: tensor }, fetches);
+    const out = pickOutput(session, output);
+    probs = Float32Array.from(out.data as Float32Array);
+    tensor.dispose();
+    out.dispose();
+  }
 
   const categoryMap: Record<number, string> = {
     0: "general",
@@ -1057,15 +1182,10 @@ async function runOneModel(
   }
   results.sort((a, b) => b.score - a.score);
 
-  // Do NOT release the session after a successful single-model run.
-  // Safari rarely returns WASM linear memory; recreate-after-release OOMs
-  // on the 2nd/3rd PixAI init even when the JS heap can grow to ~4GB.
-  // Sessions are released when switching models or between ensemble members.
-
   return { modelId, tags: results };
 }
 
-/** True if an InferenceSession is already loaded for this model. */
+/** @deprecated Warm sessions are no longer kept for large / iPhone models. */
 export function hasWarmBrowserSession(id: BrowserModelId): boolean {
   return !!runtimes.get(id)?.sessionPromise;
 }
