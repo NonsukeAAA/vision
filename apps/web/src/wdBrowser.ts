@@ -1,14 +1,20 @@
 import * as ort from "onnxruntime-web/wasm";
 import type { TagScore } from "./types";
 import { forceUncensoredTags } from "./forceUncensored";
+import {
+  BROWSER_MODELS,
+  isAppleMobileUa,
+  modelHfBase,
+  type BrowserModelId,
+} from "./browserModels";
+import {
+  mergeTagScores,
+  mergedToTagScores,
+  type TaggedByModel,
+} from "./mergeTags";
 
-/** Browser-friendly WD v3 (≈360MB). eva02-large is ≈1.3GB and hangs on mobile. */
-const HF_REPO = "SmilingWolf/wd-vit-tagger-v3";
-const HF_BASE = `https://huggingface.co/${HF_REPO}/resolve/main`;
-const CACHE_NAME = "vision-wd-vit-v3-v1";
-const MODEL_URL = `${HF_BASE}/model.onnx`;
-const TAGS_URL = `${HF_BASE}/selected_tags.csv`;
 const TARGET = 448;
+const CACHE_PREFIX = "vision-tagger-v1";
 
 type TagRow = { name: string; category: number };
 export type LoadProgress = {
@@ -16,12 +22,18 @@ export type LoadProgress = {
   loaded: number;
   total: number;
   message: string;
+  modelId?: BrowserModelId;
 };
 
 type ProgressFn = (p: LoadProgress) => void;
 
-let sessionPromise: Promise<ort.InferenceSession> | null = null;
-let tagsPromise: Promise<TagRow[]> | null = null;
+type ModelRuntime = {
+  sessionPromise: Promise<ort.InferenceSession> | null;
+  tagsPromise: Promise<TagRow[]> | null;
+};
+
+const runtimes = new Map<BrowserModelId, ModelRuntime>();
+let activeModelId: BrowserModelId = "wd-vit-v3";
 let wasmConfigured = false;
 let lastProgress: LoadProgress = {
   phase: "idle",
@@ -35,16 +47,35 @@ function emit(cb: ProgressFn | undefined, p: LoadProgress) {
   cb?.(p);
 }
 
+function getRuntime(id: BrowserModelId): ModelRuntime {
+  let rt = runtimes.get(id);
+  if (!rt) {
+    rt = { sessionPromise: null, tagsPromise: null };
+    runtimes.set(id, rt);
+  }
+  return rt;
+}
+
 export function getLoadProgress(): LoadProgress {
   return lastProgress;
 }
 
-function isAppleMobile(): boolean {
-  if (typeof navigator === "undefined") return false;
-  return /iP(hone|od|ad)/.test(navigator.userAgent);
+export function getActiveBrowserModel(): BrowserModelId {
+  return activeModelId;
 }
 
-/** Match JS↔WASM versions and force single-thread for Safari / GitHub Pages. */
+export function clearBrowserModelRuntime(id?: BrowserModelId) {
+  if (id) {
+    runtimes.delete(id);
+    return;
+  }
+  runtimes.clear();
+}
+
+function cacheName(id: BrowserModelId): string {
+  return `${CACHE_PREFIX}-${id}`;
+}
+
 function configureOrtWasm() {
   if (wasmConfigured) return;
   const ver = ort.env.versions?.web ?? "1.27.0";
@@ -53,24 +84,52 @@ function configureOrtWasm() {
   // Pages is not crossOriginIsolated — multi-thread WASM breaks on Safari.
   ort.env.wasm.numThreads = 1;
   ort.env.wasm.proxy = false;
-  if (isAppleMobile()) {
+  if (isAppleMobileUa()) {
     ort.env.wasm.simd = false;
   }
   wasmConfigured = true;
 }
 
-async function cacheMatch(url: string): Promise<Response | undefined> {
+function parseCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (c === "," && !inQuotes) {
+      out.push(cur);
+      cur = "";
+      continue;
+    }
+    cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+
+async function cacheMatch(
+  id: BrowserModelId,
+  url: string,
+): Promise<Response | undefined> {
   try {
-    const cache = await caches.open(CACHE_NAME);
+    const cache = await caches.open(cacheName(id));
     return (await cache.match(url)) ?? undefined;
   } catch {
     return undefined;
   }
 }
 
-async function cachePut(url: string, res: Response): Promise<void> {
+async function cachePut(
+  id: BrowserModelId,
+  url: string,
+  res: Response,
+): Promise<void> {
   try {
-    const cache = await caches.open(CACHE_NAME);
+    const cache = await caches.open(cacheName(id));
     await cache.put(url, res);
   } catch {
     // Quota / private mode — ignore
@@ -78,17 +137,19 @@ async function cachePut(url: string, res: Response): Promise<void> {
 }
 
 async function fetchWithProgress(
+  id: BrowserModelId,
   url: string,
   onProgress: ProgressFn | undefined,
   label: string,
 ): Promise<ArrayBuffer> {
-  const cached = await cacheMatch(url);
+  const cached = await cacheMatch(id, url);
   if (cached) {
     emit(onProgress, {
       phase: "model",
       loaded: 1,
       total: 1,
       message: `${label}（キャッシュ）`,
+      modelId: id,
     });
     return cached.arrayBuffer();
   }
@@ -99,7 +160,7 @@ async function fetchWithProgress(
   const total = Number(res.headers.get("content-length") || 0);
   if (!res.body) {
     const buf = await res.arrayBuffer();
-    await cachePut(url, new Response(buf.slice(0)));
+    await cachePut(id, url, new Response(buf.slice(0)));
     return buf;
   }
 
@@ -119,6 +180,7 @@ async function fetchWithProgress(
         total > 0
           ? `${label} ${Math.min(99, Math.round((loaded / total) * 100))}%`
           : `${label} ${(loaded / 1e6).toFixed(1)} MB`,
+      modelId: id,
     });
   }
 
@@ -130,6 +192,7 @@ async function fetchWithProgress(
   }
   const buf = merged.buffer;
   await cachePut(
+    id,
     url,
     new Response(buf.slice(0), {
       headers: { "Content-Type": "application/octet-stream" },
@@ -138,65 +201,83 @@ async function fetchWithProgress(
   return buf;
 }
 
-async function loadTags(onProgress?: ProgressFn): Promise<TagRow[]> {
-  if (!tagsPromise) {
-    tagsPromise = (async () => {
+async function loadTags(
+  modelId: BrowserModelId,
+  onProgress?: ProgressFn,
+): Promise<TagRow[]> {
+  const rt = getRuntime(modelId);
+  if (!rt.tagsPromise) {
+    rt.tagsPromise = (async () => {
+      const tagsUrl = `${modelHfBase(modelId)}/selected_tags.csv`;
       emit(onProgress, {
         phase: "tags",
         loaded: 0,
         total: 1,
-        message: "タグ辞書を取得中…",
+        message: `${BROWSER_MODELS[modelId].shortLabel} タグ辞書を取得中…`,
+        modelId,
       });
       let text: string;
-      const cached = await cacheMatch(TAGS_URL);
+      const cached = await cacheMatch(modelId, tagsUrl);
       if (cached) {
         text = await cached.text();
       } else {
-        const res = await fetch(TAGS_URL);
+        const res = await fetch(tagsUrl);
         if (!res.ok) throw new Error("タグ辞書の取得に失敗しました");
         text = await res.text();
         await cachePut(
-          TAGS_URL,
+          modelId,
+          tagsUrl,
           new Response(text, { headers: { "Content-Type": "text/csv" } }),
         );
       }
       const lines = text.trim().split(/\r?\n/);
-      const header = lines[0].split(",");
+      const header = parseCsvLine(lines[0]);
       const nameIdx = header.indexOf("name");
       const catIdx = header.indexOf("category");
       return lines.slice(1).map((line) => {
-        const cols = line.split(",");
+        const cols = parseCsvLine(line);
         return {
           name: cols[nameIdx],
           category: Number(cols[catIdx] ?? 0),
         };
       });
     })().catch((err) => {
-      tagsPromise = null;
+      rt.tagsPromise = null;
       throw err;
     });
   }
-  return tagsPromise;
+  return rt.tagsPromise;
 }
 
 async function loadSession(
+  modelId: BrowserModelId,
   onProgress?: ProgressFn,
 ): Promise<ort.InferenceSession> {
-  if (!sessionPromise) {
-    sessionPromise = (async () => {
+  const rt = getRuntime(modelId);
+  if (!rt.sessionPromise) {
+    rt.sessionPromise = (async () => {
       configureOrtWasm();
+      const info = BROWSER_MODELS[modelId];
+      const modelUrl = `${modelHfBase(modelId)}/model.onnx`;
       emit(onProgress, {
         phase: "model",
         loaded: 0,
         total: 1,
-        message: "WD モデルをダウンロード中（初回のみ・約360MB）…",
+        message: `${info.shortLabel} をダウンロード中（初回のみ・約${info.sizeMb}MB）…`,
+        modelId,
       });
-      const modelBuf = await fetchWithProgress(MODEL_URL, onProgress, "モデル");
+      const modelBuf = await fetchWithProgress(
+        modelId,
+        modelUrl,
+        onProgress,
+        info.shortLabel,
+      );
       emit(onProgress, {
         phase: "init",
         loaded: 1,
         total: 1,
-        message: "ONNX ランタイム初期化中…",
+        message: `${info.shortLabel} ONNX 初期化中…`,
+        modelId,
       });
 
       const session = await ort.InferenceSession.create(new Uint8Array(modelBuf), {
@@ -206,24 +287,27 @@ async function loadSession(
         phase: "ready",
         loaded: 1,
         total: 1,
-        message: "ブラウザ内 WD ViT 準備完了",
+        message: `${info.shortLabel} 準備完了`,
+        modelId,
       });
       return session;
     })().catch((err) => {
-      sessionPromise = null;
+      rt.sessionPromise = null;
       emit(onProgress, {
         phase: "error",
         loaded: 0,
         total: 0,
         message: err instanceof Error ? err.message : "モデル読み込み失敗",
+        modelId,
       });
       throw err;
     });
   }
-  return sessionPromise;
+  return rt.sessionPromise;
 }
 
-async function imageToTensor(file: File): Promise<ort.Tensor> {
+/** WD v3: white-pad square, BGR NHWC 0–255 float */
+async function imageToWdTensor(file: File): Promise<ort.Tensor> {
   const bitmap = await createImageBitmap(file);
   const size = Math.max(bitmap.width, bitmap.height);
   const canvas = document.createElement("canvas");
@@ -250,28 +334,61 @@ async function imageToTensor(file: File): Promise<ort.Tensor> {
   return new ort.Tensor("float32", float, [1, TARGET, TARGET, 3]);
 }
 
-export async function preloadWdBrowser(onProgress?: ProgressFn): Promise<void> {
-  await loadTags(onProgress);
-  await loadSession(onProgress);
+/** PixAI: stretch resize 448, RGB NCHW, normalize mean/std 0.5 */
+async function imageToPixaiTensor(file: File): Promise<ort.Tensor> {
+  const bitmap = await createImageBitmap(file);
+  const canvas = document.createElement("canvas");
+  canvas.width = TARGET;
+  canvas.height = TARGET;
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(bitmap, 0, 0, TARGET, TARGET);
+  bitmap.close();
+
+  const { data } = ctx.getImageData(0, 0, TARGET, TARGET);
+  const float = new Float32Array(3 * TARGET * TARGET);
+  const hw = TARGET * TARGET;
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    float[p] = (data[i] / 255 - 0.5) / 0.5;
+    float[hw + p] = (data[i + 1] / 255 - 0.5) / 0.5;
+    float[2 * hw + p] = (data[i + 2] / 255 - 0.5) / 0.5;
+  }
+  return new ort.Tensor("float32", float, [1, 3, TARGET, TARGET]);
 }
 
-export async function tagInBrowser(
+function pickOutput(
+  session: ort.InferenceSession,
+  output: Record<string, ort.Tensor>,
+) {
+  if (output.prediction) return output.prediction;
+  return output[session.outputNames[0]];
+}
+
+async function runOneModel(
   file: File,
+  modelId: BrowserModelId,
   opts: {
     threshold: number;
     characterThreshold: number;
     includeRating: boolean;
   },
   onProgress?: ProgressFn,
-): Promise<{ tags: TagScore[]; prompt: string }> {
+): Promise<TaggedByModel> {
+  activeModelId = modelId;
+  const family = BROWSER_MODELS[modelId].family;
   const [session, tags] = await Promise.all([
-    loadSession(onProgress),
-    loadTags(onProgress),
+    loadSession(modelId, onProgress),
+    loadTags(modelId, onProgress),
   ]);
-  const input = await imageToTensor(file);
-  const inputName = session.inputNames[0];
+  const input =
+    family === "pixai"
+      ? await imageToPixaiTensor(file)
+      : await imageToWdTensor(file);
+  const inputName =
+    session.inputNames.includes("input") && family === "pixai"
+      ? "input"
+      : session.inputNames[0];
   const output = await session.run({ [inputName]: input });
-  const out = output[session.outputNames[0]];
+  const out = pickOutput(session, output);
   const probs = out.data as Float32Array;
 
   const categoryMap: Record<number, string> = {
@@ -296,6 +413,108 @@ export async function tagInBrowser(
     });
   }
   results.sort((a, b) => b.score - a.score);
-  const forced = forceUncensoredTags(results);
-  return { tags: forced, prompt: forced.map((t) => t.tag).join(", ") };
+  return { modelId, tags: results };
+}
+
+export async function preloadWdBrowser(
+  modelId: BrowserModelId,
+  onProgress?: ProgressFn,
+): Promise<void> {
+  activeModelId = modelId;
+  await loadTags(modelId, onProgress);
+  await loadSession(modelId, onProgress);
+}
+
+export async function preloadBrowserModels(
+  modelIds: BrowserModelId[],
+  onProgress?: ProgressFn,
+): Promise<void> {
+  for (const id of modelIds) {
+    await preloadWdBrowser(id, onProgress);
+  }
+}
+
+export async function tagInBrowser(
+  file: File,
+  opts: {
+    modelId: BrowserModelId;
+    threshold: number;
+    characterThreshold: number;
+    includeRating: boolean;
+  },
+  onProgress?: ProgressFn,
+): Promise<{ tags: TagScore[]; prompt: string; modelId: BrowserModelId }> {
+  const one = await runOneModel(file, opts.modelId, opts, onProgress);
+  const forced = forceUncensoredTags(one.tags);
+  return {
+    tags: forced,
+    prompt: forced.map((t) => t.tag).join(", "),
+    modelId: opts.modelId,
+  };
+}
+
+/** Run several models and merge identical tags (max score, vote count). */
+export async function tagEnsembleInBrowser(
+  file: File,
+  opts: {
+    modelIds: BrowserModelId[];
+    threshold: number;
+    characterThreshold: number;
+    includeRating: boolean;
+  },
+  onProgress?: ProgressFn,
+): Promise<{
+  tags: TagScore[];
+  prompt: string;
+  modelIds: BrowserModelId[];
+  votes: Record<string, number>;
+}> {
+  const ids = [...new Set(opts.modelIds)];
+  if (ids.length === 0) {
+    throw new Error("結合するモデルが選択されていません");
+  }
+  if (ids.length === 1) {
+    const single = await tagInBrowser(
+      file,
+      { ...opts, modelId: ids[0] },
+      onProgress,
+    );
+    return {
+      tags: single.tags,
+      prompt: single.prompt,
+      modelIds: [single.modelId],
+      votes: Object.fromEntries(single.tags.map((t) => [t.tag, 1])),
+    };
+  }
+
+  const parts: TaggedByModel[] = [];
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
+    emit(onProgress, {
+      phase: "model",
+      loaded: i,
+      total: ids.length,
+      message: `結合推論 ${i + 1}/${ids.length}: ${BROWSER_MODELS[id].shortLabel}`,
+      modelId: id,
+    });
+    parts.push(await runOneModel(file, id, opts, onProgress));
+  }
+
+  const merged = mergeTagScores(parts);
+  const forced = forceUncensoredTags(mergedToTagScores(merged));
+  const voteMap = Object.fromEntries(
+    merged.map((t) => [t.tag.replaceAll("_", " "), t.votes]),
+  );
+  // Remap votes onto forced list keys
+  const votes: Record<string, number> = {};
+  for (const t of forced) {
+    votes[t.tag] = voteMap[t.tag] ?? voteMap[t.tag.replaceAll(" ", "_")] ?? 1;
+  }
+
+  return {
+    tags: forced,
+    prompt: forced.map((t) => t.tag).join(", "),
+    modelIds: ids,
+    votes,
+  };
 }

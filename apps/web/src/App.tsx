@@ -12,6 +12,12 @@ import { M3eSliderThumb } from "@m3e/react/slider";
 import { M3eTheme } from "@m3e/react/theme";
 import { checkHealth, tagViaApi } from "./api";
 import {
+  BROWSER_MODEL_LIST,
+  BROWSER_MODELS,
+  isAppleMobileUa,
+  type BrowserModelId,
+} from "./browserModels";
+import {
   isGitHubPagesHost,
   loadSettings,
   saveSettings,
@@ -20,7 +26,13 @@ import {
   type TagResult,
   type TagScore,
 } from "./types";
-import { preloadWdBrowser, tagInBrowser, type LoadProgress } from "./wdBrowser";
+import {
+  preloadBrowserModels,
+  preloadWdBrowser,
+  tagEnsembleInBrowser,
+  tagInBrowser,
+  type LoadProgress,
+} from "./wdBrowser";
 import { forceUncensoredTags } from "./forceUncensored";
 
 type Screen = "home" | "working" | "result";
@@ -41,13 +53,20 @@ export default function App() {
   const [loadProgress, setLoadProgress] = useState<LoadProgress | null>(null);
   const [snack, setSnack] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [tagVotes, setTagVotes] = useState<Record<string, number>>({});
   const [, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
   const resultRef = useRef<HTMLElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const copyResetRef = useRef<number | null>(null);
   const onPages = isGitHubPagesHost();
+  const onIphone = isAppleMobileUa();
   const showingResult = screen === "result" && !!result;
+  const activeModel = BROWSER_MODELS[settings.browserModel];
+  const runModels =
+    settings.tagRunMode === "merge"
+      ? settings.ensembleModels
+      : [settings.browserModel];
 
   const onWdProgress = (p: LoadProgress) => {
     setLoadProgress(p);
@@ -63,11 +82,23 @@ export default function App() {
     (async () => {
       if (settings.engine === "browser") {
         setModelReady(true);
-        setApiStatus("ブラウザ推論 · 初回はモデル取得あり（約360MB）");
-        void preloadWdBrowser(onWdProgress)
+        const label =
+          settings.tagRunMode === "merge"
+            ? `結合 ${runModels.map((id) => BROWSER_MODELS[id].shortLabel).join("+")}`
+            : activeModel.shortLabel;
+        const sizeHint =
+          settings.tagRunMode === "merge"
+            ? runModels.reduce((s, id) => s + BROWSER_MODELS[id].sizeMb, 0)
+            : activeModel.sizeMb;
+        setApiStatus(`ブラウザ推論 · ${label}（初回合計約${sizeHint}MB）`);
+        const warm =
+          settings.tagRunMode === "merge"
+            ? preloadBrowserModels(runModels, onWdProgress)
+            : preloadWdBrowser(settings.browserModel, onWdProgress);
+        void warm
           .then(() => {
             if (!cancelled) {
-              setApiStatus("ブラウザ内 WD ViT 準備完了（端末ローカル）");
+              setApiStatus(`${label} 準備完了（端末ローカル）`);
               setLoadProgress(null);
             }
           })
@@ -96,14 +127,22 @@ export default function App() {
 
       setSettings((s) => ({ ...s, engine: "browser" }));
       setModelReady(true);
-      setApiStatus("API 未接続のためブラウザ推論に切替（初回約360MB）");
-      setSnack("ローカル API に接続できないため、ブラウザ内 WD14 に切り替えました");
-      void preloadWdBrowser(onWdProgress).catch(() => undefined);
+      setApiStatus(`API 未接続のためブラウザ推論に切替`);
+      setSnack("ローカル API に接続できないため、ブラウザ内推論に切り替えました");
+      void preloadWdBrowser(settings.browserModel, onWdProgress).catch(
+        () => undefined,
+      );
     })();
     return () => {
       cancelled = true;
     };
-  }, [settings.engine, settings.apiBase]);
+  }, [
+    settings.engine,
+    settings.apiBase,
+    settings.browserModel,
+    settings.tagRunMode,
+    settings.ensembleModels.join(","),
+  ]);
 
   useEffect(() => {
     if (!snack) return;
@@ -135,6 +174,7 @@ export default function App() {
     setPrompt("");
     setError(null);
     setCopied(false);
+    setTagVotes({});
     if (next) startTransition(() => setScreen("home"));
     else setScreen("home");
   };
@@ -172,34 +212,66 @@ export default function App() {
       let next: TagResult;
       if (settings.engine === "local-api") {
         next = await tagViaApi(file, settings);
+        setTagVotes({});
       } else {
         if (settings.mode === "caption") {
           throw new Error(
             "詳細キャプション（JoyCaption）はローカル API モードが必要です。設定で engine を local-api に切り替えてください。",
           );
         }
-        const browser = await tagInBrowser(
-          file,
-          {
-            threshold: settings.threshold,
-            characterThreshold: settings.characterThreshold,
-            includeRating: settings.includeRating,
-          },
-          onWdProgress,
-        );
-        next = {
-          mode: settings.mode === "hybrid" ? "booru" : settings.mode,
-          tags: browser.tags,
-          prompt: browser.prompt,
-          caption: null,
-          source: { wd: "browser-onnx" },
-          device: "wasm",
-          mock: false,
-        };
-        if (settings.mode === "hybrid") {
-          next.prompt = browser.prompt;
-          next.source.note =
-            "GitHub Pages / ブラウザモードでは WD14 タグのみ。JoyCaption 併用はローカル API を起動してください。";
+        if (settings.tagRunMode === "merge") {
+          const ensemble = await tagEnsembleInBrowser(
+            file,
+            {
+              modelIds: settings.ensembleModels,
+              threshold: settings.threshold,
+              characterThreshold: settings.characterThreshold,
+              includeRating: settings.includeRating,
+            },
+            onWdProgress,
+          );
+          setTagVotes(ensemble.votes);
+          next = {
+            mode: settings.mode === "hybrid" ? "booru" : settings.mode,
+            tags: ensemble.tags,
+            prompt: ensemble.prompt,
+            caption: null,
+            source: {
+              wd: ensemble.modelIds.join("+"),
+              note:
+                settings.mode === "hybrid"
+                  ? "結合モード: 複数モデルの同一タグをマージ。JoyCaption はローカル API が必要です。"
+                  : `結合モード: ${ensemble.modelIds.map((id) => BROWSER_MODELS[id].shortLabel).join(" + ")}`,
+            },
+            device: "wasm",
+            mock: false,
+          };
+        } else {
+          setTagVotes({});
+          const browser = await tagInBrowser(
+            file,
+            {
+              modelId: settings.browserModel,
+              threshold: settings.threshold,
+              characterThreshold: settings.characterThreshold,
+              includeRating: settings.includeRating,
+            },
+            onWdProgress,
+          );
+          next = {
+            mode: settings.mode === "hybrid" ? "booru" : settings.mode,
+            tags: browser.tags,
+            prompt: browser.prompt,
+            caption: null,
+            source: { wd: browser.modelId },
+            device: "wasm",
+            mock: false,
+          };
+          if (settings.mode === "hybrid") {
+            next.prompt = browser.prompt;
+            next.source.note =
+              "GitHub Pages / ブラウザモードでは WD/PixAI タグのみ。JoyCaption 併用はローカル API を起動してください。";
+          }
         }
       }
       const forcedTags = forceUncensoredTags(next.tags);
@@ -308,10 +380,111 @@ export default function App() {
                   }))
                 }
               >
-                <option value="browser">ブラウザ (WD14 · 推奨 / Pages対応)</option>
+                <option value="browser">ブラウザ (WD/PixAI · 推奨 / Pages対応)</option>
                 <option value="local-api">ローカル API (JoyCaption + WD14)</option>
               </select>
             </label>
+            {settings.engine === "browser" && (
+              <>
+                <label>
+                  実行モード
+                  <select
+                    value={settings.tagRunMode}
+                    onChange={(e) =>
+                      setSettings((s) => ({
+                        ...s,
+                        tagRunMode: e.target.value as AppSettings["tagRunMode"],
+                      }))
+                    }
+                  >
+                    <option value="single">単体モデル</option>
+                    <option value="merge">結合（同一タグをマージ）</option>
+                  </select>
+                </label>
+                {settings.tagRunMode === "single" ? (
+                  <label>
+                    ブラウザモデル
+                    <select
+                      value={settings.browserModel}
+                      onChange={(e) => {
+                        const id = e.target.value as BrowserModelId;
+                        setSettings((s) => ({ ...s, browserModel: id }));
+                        setSnack(
+                          `${BROWSER_MODELS[id].shortLabel} に切替 · 初回は再ダウンロードあり`,
+                        );
+                      }}
+                    >
+                      {BROWSER_MODEL_LIST.map((m) => (
+                        <option
+                          key={m.id}
+                          value={m.id}
+                          disabled={onIphone && !m.mobileFriendly}
+                        >
+                          {m.label}
+                          {m.mobileFriendly
+                            ? ` · iPhone可 · ~${m.sizeMb}MB`
+                            : ` · PC推奨 · ~${m.sizeMb}MB`}
+                        </option>
+                      ))}
+                    </select>
+                    <span
+                      className="muted"
+                      style={{
+                        marginTop: 4,
+                        textTransform: "none",
+                        letterSpacing: "normal",
+                        fontWeight: 400,
+                      }}
+                    >
+                      {activeModel.description}
+                      {onIphone && !activeModel.mobileFriendly
+                        ? " · この端末では失敗する可能性大"
+                        : ""}
+                    </span>
+                  </label>
+                ) : (
+                  <div className="ensemble-pick">
+                    <p className="section-title" style={{ fontSize: "0.9rem" }}>
+                      結合するモデル
+                    </p>
+                    <p className="muted">
+                      同じタグは1つにまとめ、スコアは最大値。複数一致は優先表示します。
+                    </p>
+                    {BROWSER_MODEL_LIST.map((m) => {
+                      const checked = settings.ensembleModels.includes(m.id);
+                      const blocked = onIphone && !m.mobileFriendly;
+                      return (
+                        <label key={m.id} className="check-line">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={blocked}
+                            onChange={(e) => {
+                              setSettings((s) => {
+                                const next = e.target.checked
+                                  ? [...s.ensembleModels, m.id]
+                                  : s.ensembleModels.filter((id) => id !== m.id);
+                                return {
+                                  ...s,
+                                  ensembleModels:
+                                    next.length > 0 ? next : [s.browserModel],
+                                };
+                              });
+                            }}
+                          />
+                          {m.shortLabel}
+                          <span className="muted">
+                            {blocked
+                              ? " · iPhone非推奨"
+                              : ` · ~${m.sizeMb}MB`}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            )}
             {settings.engine === "local-api" && (
               <>
                 <p className="muted">
@@ -392,6 +565,117 @@ export default function App() {
         </header>
 
         <div className="stack">
+          {!showingResult && settings.engine === "browser" && (
+            <div className="model-picker">
+              <div className="model-picker-label">
+                {settings.tagRunMode === "merge" ? "結合モード" : "モデル"}
+              </div>
+              <div className="mode-row run-mode-row" role="radiogroup" aria-label="実行モード">
+                <button
+                  type="button"
+                  role="radio"
+                  className="mode-btn"
+                  aria-checked={settings.tagRunMode === "single"}
+                  onClick={() =>
+                    setSettings((s) => ({ ...s, tagRunMode: "single" }))
+                  }
+                >
+                  単体
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  className="mode-btn"
+                  aria-checked={settings.tagRunMode === "merge"}
+                  onClick={() =>
+                    setSettings((s) => ({ ...s, tagRunMode: "merge" }))
+                  }
+                >
+                  結合
+                </button>
+              </div>
+              {settings.tagRunMode === "single" ? (
+                <>
+                  <div
+                    className="mode-row model-row"
+                    role="radiogroup"
+                    aria-label="ブラウザモデル"
+                  >
+                    {BROWSER_MODEL_LIST.map((m) => {
+                      const blocked = onIphone && !m.mobileFriendly;
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          role="radio"
+                          className="mode-btn"
+                          aria-checked={settings.browserModel === m.id}
+                          disabled={blocked}
+                          title={
+                            blocked
+                              ? "iPhone では非推奨（約1.2GB）"
+                              : `${m.label} · 約${m.sizeMb}MB`
+                          }
+                          onClick={() => {
+                            if (blocked || settings.browserModel === m.id) return;
+                            setSettings((s) => ({ ...s, browserModel: m.id }));
+                            setSnack(
+                              `${m.shortLabel} に切替 · 初回は約${m.sizeMb}MB`,
+                            );
+                          }}
+                        >
+                          {m.shortLabel}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="muted model-picker-hint">
+                    {activeModel.description}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="ensemble-chips">
+                    {BROWSER_MODEL_LIST.map((m) => {
+                      const on = settings.ensembleModels.includes(m.id);
+                      const blocked = onIphone && !m.mobileFriendly;
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          className={`ensemble-chip ${on ? "is-on" : ""}`}
+                          disabled={blocked}
+                          title={
+                            blocked
+                              ? "iPhone では非推奨（約1.2GB）"
+                              : m.description
+                          }
+                          onClick={() => {
+                            setSettings((s) => {
+                              const next = on
+                                ? s.ensembleModels.filter((id) => id !== m.id)
+                                : [...s.ensembleModels, m.id];
+                              return {
+                                ...s,
+                                ensembleModels:
+                                  next.length > 0 ? next : [s.browserModel],
+                              };
+                            });
+                          }}
+                        >
+                          {m.shortLabel}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="muted model-picker-hint">
+                    同一タグは結合 · スコアは最大値 · 複数一致を優先
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+
           {!showingResult && (
             <div className="mode-row" role="radiogroup" aria-label="出力モード">
               {(
@@ -624,10 +908,15 @@ export default function App() {
                         title={
                           t.tag === "uncensored"
                             ? "uncensored は常に付与されます"
-                            : "クリックで削除"
+                            : tagVotes[t.tag]
+                              ? `${tagVotes[t.tag]}モデルが一致 · クリックで削除`
+                              : "クリックで削除"
                         }
                       >
                         {t.tag}
+                        {tagVotes[t.tag] && tagVotes[t.tag] > 1 && (
+                          <span className="vote">×{tagVotes[t.tag]}</span>
+                        )}
                         <span className="score">{t.score.toFixed(2)}</span>
                       </button>
                     ))}

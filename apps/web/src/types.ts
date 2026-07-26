@@ -1,5 +1,16 @@
+import {
+  DEFAULT_BROWSER_MODEL,
+  DEFAULT_ENSEMBLE_MODELS,
+  isBrowserModelId,
+  resolveBrowserModel,
+  sanitizeEnsembleModels,
+  type BrowserModelId,
+} from "./browserModels";
+
 export type OutputMode = "booru" | "caption" | "hybrid";
 export type InferenceEngine = "browser" | "local-api";
+export type TagRunMode = "single" | "merge";
+export type { BrowserModelId };
 
 export type TagScore = {
   tag: string;
@@ -21,6 +32,12 @@ export type AppSettings = {
   engine: InferenceEngine;
   apiBase: string;
   mode: OutputMode;
+  /** Single-model mode selection */
+  browserModel: BrowserModelId;
+  /** single = one model; merge = combine selected models */
+  tagRunMode: TagRunMode;
+  /** Models used when tagRunMode === "merge" */
+  ensembleModels: BrowserModelId[];
   threshold: number;
   characterThreshold: number;
   includeRating: boolean;
@@ -28,7 +45,7 @@ export type AppSettings = {
   enableWd: boolean;
 };
 
-const STORAGE_KEY = "vision.settings.v2";
+const STORAGE_KEY = "vision.settings.v4";
 
 export function isGitHubPagesHost(): boolean {
   if (typeof window === "undefined") return false;
@@ -36,10 +53,12 @@ export function isGitHubPagesHost(): boolean {
 }
 
 export const defaultSettings = (): AppSettings => ({
-  // GitHub Pages ではブラウザ内 WD14 が既定（ローカル API は別途起動が必要）
   engine: "browser",
   apiBase: "http://127.0.0.1:8000",
   mode: "hybrid",
+  browserModel: DEFAULT_BROWSER_MODEL,
+  tagRunMode: "single",
+  ensembleModels: [...DEFAULT_ENSEMBLE_MODELS],
   threshold: 0.35,
   characterThreshold: 0.85,
   includeRating: false,
@@ -50,10 +69,27 @@ export const defaultSettings = (): AppSettings => ({
 export function loadSettings(): AppSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    const merged = raw
-      ? { ...defaultSettings(), ...JSON.parse(raw) }
+    const legacy =
+      !raw && typeof localStorage !== "undefined"
+        ? localStorage.getItem("vision.settings.v3") ||
+          localStorage.getItem("vision.settings.v2")
+        : null;
+    const parsed = raw
+      ? JSON.parse(raw)
+      : legacy
+        ? JSON.parse(legacy)
+        : null;
+    const merged: AppSettings = parsed
+      ? { ...defaultSettings(), ...parsed }
       : defaultSettings();
-    // Pages 上で誤って local-api が残っていると解析不能になるため補正
+    merged.browserModel = resolveBrowserModel(
+      isBrowserModelId(merged.browserModel)
+        ? merged.browserModel
+        : DEFAULT_BROWSER_MODEL,
+    );
+    merged.tagRunMode =
+      merged.tagRunMode === "merge" ? "merge" : "single";
+    merged.ensembleModels = sanitizeEnsembleModels(merged.ensembleModels);
     if (isGitHubPagesHost() && merged.engine === "local-api") {
       return { ...merged, engine: "browser" };
     }

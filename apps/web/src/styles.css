@@ -231,6 +231,76 @@ select {
   animation: rise 520ms var(--ease) both;
 }
 
+.model-picker {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.model-picker-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.model-row {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.model-picker-hint {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.run-mode-row {
+  grid-template-columns: 1fr 1fr;
+}
+
+.ensemble-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ensemble-chip {
+  appearance: none;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--line-strong);
+  background: rgba(255, 255, 255, 0.45);
+  color: var(--ink-3);
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.ensemble-chip.is-on {
+  background: #fff;
+  color: var(--ink);
+  border-color: var(--ink);
+}
+
+.ensemble-chip:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.ensemble-pick {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.tag-chip .vote {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  font-weight: 600;
+}
+
 .mode-btn {
   appearance: none;
   min-height: var(--btn-h-sm);
@@ -252,6 +322,11 @@ select {
 .mode-btn[aria-checked="true"] {
   background: #fff;
   color: var(--ink);
+}
+
+.mode-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .dropzone {
