@@ -245,7 +245,22 @@ select {
 }
 
 .model-row {
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (max-width: 380px) {
+  .model-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .model-row .mode-btn:nth-child(2) {
+    border-right: 0;
+  }
+
+  .model-row .mode-btn:nth-child(3),
+  .model-row .mode-btn:nth-child(4) {
+    border-top: 1px solid var(--line);
+  }
 }
 
 .model-picker-hint {

@@ -410,15 +410,8 @@ export default function App() {
                       }}
                     >
                       {BROWSER_MODEL_LIST.map((m) => (
-                        <option
-                          key={m.id}
-                          value={m.id}
-                          disabled={onIphone && !m.mobileFriendly}
-                        >
-                          {m.label}
-                          {m.mobileFriendly
-                            ? ` · iPhone可 · ~${m.sizeMb}MB`
-                            : ` · PC推奨 · ~${m.sizeMb}MB`}
+                        <option key={m.id} value={m.id}>
+                          {m.label} · ~{m.sizeMb}MB
                         </option>
                       ))}
                     </select>
@@ -432,8 +425,8 @@ export default function App() {
                       }}
                     >
                       {activeModel.description}
-                      {onIphone && !activeModel.mobileFriendly
-                        ? " · この端末では失敗する可能性大"
+                      {onIphone && activeModel.sizeMb >= 300
+                        ? " · メモリ不足で落ちることがあります"
                         : ""}
                     </span>
                   </label>
@@ -447,13 +440,11 @@ export default function App() {
                     </p>
                     {BROWSER_MODEL_LIST.map((m) => {
                       const checked = settings.ensembleModels.includes(m.id);
-                      const blocked = onIphone && !m.mobileFriendly;
                       return (
                         <label key={m.id} className="check-line">
                           <input
                             type="checkbox"
                             checked={checked}
-                            disabled={blocked}
                             onChange={(e) => {
                               setSettings((s) => {
                                 const next = e.target.checked
@@ -468,11 +459,7 @@ export default function App() {
                             }}
                           />
                           {m.shortLabel}
-                          <span className="muted">
-                            {blocked
-                              ? " · iPhone非推奨"
-                              : ` · ~${m.sizeMb}MB`}
-                          </span>
+                          <span className="muted"> · ~{m.sizeMb}MB</span>
                         </label>
                       );
                     })}
@@ -596,33 +583,25 @@ export default function App() {
                     role="radiogroup"
                     aria-label="ブラウザモデル"
                   >
-                    {BROWSER_MODEL_LIST.map((m) => {
-                      const blocked = onIphone && !m.mobileFriendly;
-                      return (
-                        <button
-                          key={m.id}
-                          type="button"
-                          role="radio"
-                          className="mode-btn"
-                          aria-checked={settings.browserModel === m.id}
-                          disabled={blocked}
-                          title={
-                            blocked
-                              ? `iPhone では非推奨（約${m.sizeMb}MB・初期化で落ちやすい）`
-                              : `${m.label} · 約${m.sizeMb}MB`
-                          }
-                          onClick={() => {
-                            if (blocked || settings.browserModel === m.id) return;
-                            setSettings((s) => ({ ...s, browserModel: m.id }));
-                            setSnack(
-                              `${m.shortLabel} に切替 · 初回は約${m.sizeMb}MB`,
-                            );
-                          }}
-                        >
-                          {m.shortLabel}
-                        </button>
-                      );
-                    })}
+                    {BROWSER_MODEL_LIST.map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        role="radio"
+                        className="mode-btn"
+                        aria-checked={settings.browserModel === m.id}
+                        title={`${m.label} · 約${m.sizeMb}MB`}
+                        onClick={() => {
+                          if (settings.browserModel === m.id) return;
+                          setSettings((s) => ({ ...s, browserModel: m.id }));
+                          setSnack(
+                            `${m.shortLabel} に切替 · 初回は約${m.sizeMb}MB`,
+                          );
+                        }}
+                      >
+                        {m.shortLabel}
+                      </button>
+                    ))}
                   </div>
                   <p className="muted model-picker-hint">
                     {activeModel.description}
@@ -633,18 +612,12 @@ export default function App() {
                   <div className="ensemble-chips">
                     {BROWSER_MODEL_LIST.map((m) => {
                       const on = settings.ensembleModels.includes(m.id);
-                      const blocked = onIphone && !m.mobileFriendly;
                       return (
                         <button
                           key={m.id}
                           type="button"
                           className={`ensemble-chip ${on ? "is-on" : ""}`}
-                          disabled={blocked}
-                          title={
-                            blocked
-                              ? `iPhone では非推奨（約${m.sizeMb}MB・初期化で落ちやすい）`
-                              : m.description
-                          }
+                          title={m.description}
                           onClick={() => {
                             setSettings((s) => {
                               const next = on

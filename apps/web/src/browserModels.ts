@@ -110,31 +110,23 @@ export function isAppleMobileUa(
 
 export function resolveBrowserModel(
   preferred: unknown,
-  ua?: string,
+  _ua?: string,
 ): BrowserModelId {
-  if (isBrowserModelId(preferred)) {
-    if (isAppleMobileUa(ua) && !BROWSER_MODELS[preferred].mobileFriendly) {
-      return DEFAULT_BROWSER_MODEL_IPHONE;
-    }
-    return preferred;
-  }
-  return isAppleMobileUa(ua)
+  if (isBrowserModelId(preferred)) return preferred;
+  return isAppleMobileUa(_ua)
     ? DEFAULT_BROWSER_MODEL_IPHONE
     : DEFAULT_BROWSER_MODEL;
 }
 
 export function sanitizeEnsembleModels(
   models: unknown,
-  ua?: string,
+  _ua?: string,
 ): BrowserModelId[] {
   const list = Array.isArray(models)
     ? models.filter(isBrowserModelId)
     : [...DEFAULT_ENSEMBLE_MODELS];
   const unique = [...new Set(list)];
-  const filtered = isAppleMobileUa(ua)
-    ? unique.filter((id) => BROWSER_MODELS[id].mobileFriendly)
-    : unique;
-  return filtered.length > 0 ? filtered : [DEFAULT_BROWSER_MODEL_IPHONE];
+  return unique.length > 0 ? unique : [DEFAULT_BROWSER_MODEL_IPHONE];
 }
 
 export function modelHfBase(id: BrowserModelId): string {
