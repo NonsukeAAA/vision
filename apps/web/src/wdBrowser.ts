@@ -15,6 +15,13 @@ import {
   type TaggedByModel,
 } from "./mergeTags";
 import { requestPersistentStorage } from "./deviceResources";
+import {
+  describeError,
+  jsHeapMb,
+  logError,
+  logInfo,
+  logWarn,
+} from "./diagnostics";
 
 const TARGET = 448;
 const CACHE_PREFIX = "vision-tagger-v3";
@@ -80,8 +87,26 @@ let lastProgress: LoadProgress = {
   message: "待機中",
 };
 
+let lastLoggedPhase = "";
+let lastPhaseLogAt = 0;
+
 function emit(cb: ProgressFn | undefined, p: LoadProgress) {
   lastProgress = p;
+  // Every phase change becomes a breadcrumb; long downloads get one every 2s so a
+  // tab that dies mid-transfer still shows how far it got.
+  const key = `${p.phase}:${p.modelId ?? ""}:${p.message}`;
+  const now = Date.now();
+  if (key !== lastLoggedPhase || now - lastPhaseLogAt > 2000) {
+    lastLoggedPhase = key;
+    lastPhaseLogAt = now;
+    logInfo(`progress:${p.phase}`, {
+      model: p.modelId,
+      message: p.message,
+      pct:
+        p.total > 0 ? Math.round((p.loaded / p.total) * 100) : null,
+      mb: p.total > 1e6 ? Math.round(p.loaded / 1e6) : null,
+    });
+  }
   cb?.(p);
 }
 
@@ -143,9 +168,17 @@ export async function releaseBrowserSessions(
  * local storage rather than downloading again.
  */
 export async function releaseAllBrowserMemory(): Promise<void> {
+  const live = [...runtimes]
+    .filter(([, rt]) => rt.sessionPromise)
+    .map(([id]) => id);
+  logInfo("release all memory", {
+    sessions: live.join(",") || "none",
+    heapMb: jsHeapMb(),
+  });
   await releaseBrowserSessions();
   runtimes.clear();
   await yieldForPaint(60);
+  logInfo("release all memory done", { heapMb: jsHeapMb() });
 }
 
 async function yieldForPaint(ms = 50): Promise<void> {
@@ -288,21 +321,66 @@ async function readOpfsMeta(
   }
 }
 
-export function formatModelLoadError(err: unknown): string {
-  if (err instanceof DOMException && err.name === "AbortError") {
-    return "ダウンロードを中断しました";
-  }
+export type ErrorKind =
+  | "abort"
+  | "network"
+  | "storage"
+  | "memory"
+  | "wasm"
+  | "decode"
+  | "unsupported"
+  | "unknown";
+
+/** Group a failure so the UI can say something actionable and the log stays greppable. */
+export function classifyError(err: unknown): ErrorKind {
+  if (err instanceof DOMException && err.name === "AbortError") return "abort";
+  const name = err instanceof Error ? err.name : "";
   const msg = err instanceof Error ? err.message : String(err);
-  if (/Failed to fetch|NetworkError|Load failed|network/i.test(msg)) {
-    return "モデル取得に失敗しました（通信エラー）。Wi‑Fi で再試行してください";
+  if (/AbortError/.test(name)) return "abort";
+  if (/QuotaExceededError/.test(name) || /QuotaExceeded|storage|sqlite|quota/i.test(msg)) {
+    return "storage";
   }
-  if (/QuotaExceeded|sqlite|cache/i.test(msg)) {
-    return "端末ストレージ不足です。サイトデータを削除して再試行してください";
+  if (/Failed to fetch|NetworkError|Load failed|network|ERR_/i.test(msg)) {
+    return "network";
   }
-  if (/out of memory|Array buffer|allocation/i.test(msg)) {
-    return "メモリ不足です。他アプリを閉じて単体モデルで再試行してください";
+  if (
+    /out of memory|Array ?buffer|allocation failed|failed to allocate|Cannot allocate|memory access out of bounds|Maximum call stack/i.test(
+      msg,
+    )
+  ) {
+    return "memory";
   }
-  return msg || "モデル読み込みに失敗しました";
+  if (/RuntimeError|Aborted\(|wasm|WebAssembly|unreachable/i.test(msg)) {
+    return "wasm";
+  }
+  if (/decode|createImageBitmap|画像を読み込め|image/i.test(msg)) return "decode";
+  if (/not supported|unsupported|OPFS|SharedArrayBuffer/i.test(msg)) {
+    return "unsupported";
+  }
+  return "unknown";
+}
+
+export function formatModelLoadError(err: unknown): string {
+  const kind = classifyError(err);
+  const msg = err instanceof Error ? err.message : String(err);
+  switch (kind) {
+    case "abort":
+      return "処理を中断しました";
+    case "network":
+      return "モデル取得に失敗しました（通信エラー）。Wi‑Fi で再試行してください";
+    case "storage":
+      return "端末ストレージ不足です。設定からモデルキャッシュを削除して再試行してください";
+    case "memory":
+      return "メモリ不足で処理を中断しました。他アプリ・他タブを閉じ、単体モデルで再試行してください";
+    case "wasm":
+      return `推論エンジンが停止しました。ページを再読み込みして再試行してください（${msg.slice(0, 80)}）`;
+    case "decode":
+      return "画像を読み込めませんでした。別の画像か、JPEG/PNG で試してください";
+    case "unsupported":
+      return `この端末・ブラウザでは実行できない機能があります（${msg.slice(0, 80)}）`;
+    default:
+      return msg || "処理に失敗しました";
+  }
 }
 
 function cacheName(id: BrowserModelId): string {
@@ -647,6 +725,10 @@ async function loadModelFilePersistent(
   const cached = await readOpfsCachedModel(id, url);
   throwIfAborted(signal);
   if (cached) {
+    logInfo("opfs cache hit", {
+      model: id,
+      mb: Math.round(cached.size / 1e6),
+    });
     emit(onProgress, {
       phase: "model",
       loaded: 1,
@@ -656,6 +738,7 @@ async function loadModelFilePersistent(
     });
     return cached;
   }
+  logInfo("opfs cache miss, downloading", { model: id, url });
 
   // Split-part manifest (PixAI on Pages; GitHub file size limit)
   if (url.endsWith(".json")) {
@@ -851,12 +934,29 @@ async function loadSession(
       await yieldForPaint(large || isAppleMobileUa() ? 160 : 40);
       throwIfAborted(signal);
 
+      // The riskiest moment on iOS: ORT allocates the whole weight arena here.
+      logInfo("ort session create start", {
+        model: modelId,
+        sizeMb: info.sizeMb,
+        source: source instanceof File ? `file:${Math.round(source.size / 1e6)}MB` : "bytes",
+        gpu: usingGpu,
+        graphOpt: large ? "disabled" : "basic",
+        heapMb: jsHeapMb(),
+      });
+      const createStartedAt = performance.now();
       try {
         const session = await createSessionFromBytesOrFile(
           source,
           large,
           signal,
         );
+        logInfo("ort session create done", {
+          model: modelId,
+          ms: performance.now() - createStartedAt,
+          inputs: session.inputNames.join(","),
+          outputs: session.outputNames.join(","),
+          heapMb: jsHeapMb(),
+        });
         emit(onProgress, {
           phase: "ready",
           loaded: 1,
@@ -866,12 +966,23 @@ async function loadSession(
         });
         return session;
       } catch (err) {
+        logError("ort session create failed", {
+          model: modelId,
+          kind: classifyError(err),
+          ms: performance.now() - createStartedAt,
+          ...describeError(err),
+        });
         throw new Error(
           `${formatModelLoadError(err)}（${info.shortLabel}は ViT / ConvNeXt より重いです）`,
         );
       }
     })().catch((err) => {
       rt.sessionPromise = null;
+      logError("model load failed", {
+        model: modelId,
+        kind: classifyError(err),
+        ...describeError(err),
+      });
       emit(onProgress, {
         phase: "error",
         loaded: 0,
@@ -1010,16 +1121,41 @@ async function runOneModel(
   const family = BROWSER_MODELS[modelId].family;
   const info = BROWSER_MODELS[modelId];
 
+  logInfo("model run start", {
+    model: modelId,
+    family,
+    fileMb: Math.round((file.size / 1e6) * 10) / 10,
+    fileType: file.type || "unknown",
+    warm: hasWarmBrowserSession(modelId),
+    heapMb: jsHeapMb(),
+  });
+
   const tags = await loadTags(modelId, onProgress, signal);
   throwIfAborted(signal);
 
-  const inputTensor =
-    family === "pixai"
-      ? await imageToPixaiTensor(file)
-      : await imageToWdTensor(file);
+  const preprocessStartedAt = performance.now();
+  let inputTensor: ort.Tensor;
+  try {
+    inputTensor =
+      family === "pixai"
+        ? await imageToPixaiTensor(file)
+        : await imageToWdTensor(file);
+  } catch (err) {
+    logError("preprocess failed", {
+      model: modelId,
+      kind: classifyError(err),
+      ...describeError(err),
+    });
+    throw err;
+  }
   const dims = [...inputTensor.dims].map(Number);
   const inputData = Float32Array.from(inputTensor.data as Float32Array);
   inputTensor.dispose();
+  logInfo("preprocess done", {
+    model: modelId,
+    dims: dims.join("x"),
+    ms: performance.now() - preprocessStartedAt,
+  });
 
   if (hasWarmBrowserSession(modelId)) {
     emit(onProgress, {
@@ -1039,12 +1175,34 @@ async function runOneModel(
   const fetches = session.outputNames.includes("prediction")
     ? ["prediction"]
     : [session.outputNames[0]];
-  const output = await session.run({ [name]: tensor }, fetches);
-  const out = pickOutput(session, output);
-  // Copy out of the WASM heap immediately so the tensor can be dropped.
-  const probs = Float32Array.from(out.data as Float32Array);
-  tensor.dispose();
-  out.dispose();
+  logInfo("inference start", { model: modelId, input: name, heapMb: jsHeapMb() });
+  const inferStartedAt = performance.now();
+  let probs: Float32Array;
+  try {
+    const output = await session.run({ [name]: tensor }, fetches);
+    const out = pickOutput(session, output);
+    // Copy out of the WASM heap immediately so the tensor can be dropped.
+    probs = Float32Array.from(out.data as Float32Array);
+    out.dispose();
+  } catch (err) {
+    logError("inference failed", {
+      model: modelId,
+      kind: classifyError(err),
+      ms: performance.now() - inferStartedAt,
+      ...describeError(err),
+    });
+    // A crashed WASM instance can never be reused; drop it so the next run rebuilds.
+    await releaseBrowserSessions().catch(() => undefined);
+    throw err;
+  } finally {
+    tensor.dispose();
+  }
+  logInfo("inference done", {
+    model: modelId,
+    ms: performance.now() - inferStartedAt,
+    outputs: probs.length,
+    heapMb: jsHeapMb(),
+  });
 
   const categoryMap: Record<number, string> = {
     0: "general",
@@ -1068,6 +1226,17 @@ async function runOneModel(
     });
   }
   results.sort((a, b) => b.score - a.score);
+  logInfo("model run done", {
+    model: modelId,
+    tags: results.length,
+    top: results[0]?.tag,
+  });
+  if (results.length === 0) {
+    logWarn("no tags above threshold", {
+      model: modelId,
+      threshold: opts.threshold,
+    });
+  }
 
   // Keep the main-thread session warm for repeat analyzes. Safari does not
   // return WASM memory after release(); recreating PixAI OOMs by the 2nd/3rd try.

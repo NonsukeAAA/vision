@@ -757,6 +757,123 @@ select {
   --m3e-dialog-header-font-family: var(--font-display);
 }
 
+.log-dialog {
+  --m3e-dialog-min-width: min(94vw, 360px);
+  --m3e-dialog-max-width: min(94vw, 720px);
+  --m3e-dialog-shape: var(--radius-lg);
+  --m3e-dialog-header-font-family: var(--font-display);
+}
+
+.log-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.log-crash {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  color: var(--error);
+  background: var(--error-soft);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm) var(--space-md);
+  font-size: 0.8125rem;
+}
+
+.log-crash code {
+  font-size: 0.75rem;
+  word-break: break-all;
+}
+
+.log-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+  border: 1px solid var(--outline-soft, rgba(0, 0, 0, 0.12));
+  border-radius: var(--radius-sm);
+}
+
+.log-row {
+  display: flex;
+  gap: var(--space-sm);
+  padding: 0.35rem var(--space-sm);
+  font-size: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.log-row:last-child {
+  border-bottom: none;
+}
+
+.log-time {
+  flex: 0 0 auto;
+  opacity: 0.55;
+}
+
+.log-msg {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.log-msg em {
+  font-style: normal;
+  opacity: 0.6;
+  font-size: 0.7rem;
+}
+
+.log-warn {
+  background: rgba(196, 138, 27, 0.1);
+}
+
+.log-error {
+  background: var(--error-soft);
+  color: var(--error);
+}
+
+.fatal-screen {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 2rem 1.25rem;
+  font-family: var(--font-body, system-ui, sans-serif);
+}
+
+.fatal-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+
+.fatal-actions button {
+  font: inherit;
+  padding: 0.4rem 1rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  background: transparent;
+  cursor: pointer;
+}
+
+.fatal-screen pre {
+  max-height: 50vh;
+  overflow: auto;
+  font-size: 0.7rem;
+  white-space: pre-wrap;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+}
+
 /* Slotted into the dialog's shadow DOM, so author styles win the tie. */
 .dialog-actions {
   display: flex;
@@ -1067,12 +1184,35 @@ select {
 }
 
 .error {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
   color: var(--error);
   background: var(--error-soft);
   border: 1px solid rgba(163, 59, 59, 0.18);
   padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-sm);
   font-size: 0.8125rem;
+}
+
+.error-actions {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.error-actions button {
+  font: inherit;
+  color: var(--error);
+  background: transparent;
+  border: 1px solid rgba(163, 59, 59, 0.4);
+  border-radius: 999px;
+  padding: 0.25rem 0.75rem;
+  cursor: pointer;
+}
+
+.error-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .action-dock {

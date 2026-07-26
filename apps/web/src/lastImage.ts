@@ -6,6 +6,8 @@
  * reload prompt mobile Safari shows after dropping a tab.
  */
 
+import { describeError, logInfo, logWarn } from "./diagnostics";
+
 const DB_NAME = "vision-last-image";
 const STORE = "image";
 const KEY = "current";
@@ -35,19 +37,45 @@ function openDb(): Promise<IDBDatabase> {
   });
 }
 
+/** After a killed tab, IndexedDB can stay blocked and never call back. */
+function withTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(
+      () => reject(new Error(`${label} timed out after ${ms}ms`)),
+      ms,
+    );
+    work.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        window.clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 async function withStore<T>(
   mode: IDBTransactionMode,
   run: (store: IDBObjectStore) => IDBRequest<T>,
 ): Promise<T> {
-  const db = await openDb();
+  const db = await withTimeout(openDb(), 5000, "IndexedDB open");
   try {
-    return await new Promise<T>((resolve, reject) => {
-      const tx = db.transaction(STORE, mode);
-      const req = run(tx.objectStore(STORE));
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () =>
-        reject(req.error ?? new Error("IndexedDB request failed"));
-    });
+    return await withTimeout(
+      new Promise<T>((resolve, reject) => {
+        const tx = db.transaction(STORE, mode);
+        const req = run(tx.objectStore(STORE));
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () =>
+          reject(req.error ?? new Error("IndexedDB request failed"));
+        tx.onabort = () =>
+          reject(tx.error ?? new Error("IndexedDB transaction aborted"));
+      }),
+      8000,
+      `IndexedDB ${mode}`,
+    );
   } finally {
     db.close();
   }
@@ -62,8 +90,10 @@ export async function saveLastImage(file: File): Promise<void> {
       savedAt: Date.now(),
     };
     await withStore("readwrite", (store) => store.put(record, KEY));
-  } catch {
+    logInfo("last image saved", { mb: Math.round((file.size / 1e6) * 10) / 10 });
+  } catch (err) {
     // Private browsing and storage pressure land here; the app works without it.
+    logWarn("last image save failed", describeError(err));
   }
 }
 
@@ -77,7 +107,8 @@ export async function loadLastImage(): Promise<File | null> {
     return new File([record.blob], record.name || "image.jpg", {
       type: record.type || record.blob.type || "image/jpeg",
     });
-  } catch {
+  } catch (err) {
+    logWarn("last image restore failed", describeError(err));
     return null;
   }
 }
@@ -85,7 +116,7 @@ export async function loadLastImage(): Promise<File | null> {
 export async function clearLastImage(): Promise<void> {
   try {
     await withStore("readwrite", (store) => store.delete(KEY));
-  } catch {
-    // ignore
+  } catch (err) {
+    logWarn("last image clear failed", describeError(err));
   }
 }

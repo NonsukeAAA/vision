@@ -28,6 +28,7 @@ import {
   isGitHubPagesHost,
   type AppSettings,
 } from "./types";
+import { getLogEntries, getPreviousSessionReport } from "./diagnostics";
 type Props = {
   open: boolean;
   settings: AppSettings;
@@ -35,6 +36,8 @@ type Props = {
   onClose: () => void;
   /** Opens the drop-tag list, which App renders as its own modal. */
   onEditDropTags: () => void;
+  /** Opens the diagnostics log, also an App-level modal. */
+  onOpenLog: () => void;
   onSnack: (message: string) => void;
 };
 
@@ -58,9 +61,12 @@ export function SettingsPanel({
   onChange,
   onClose,
   onEditDropTags,
+  onOpenLog,
   onSnack,
 }: Props) {
   const onPages = isGitHubPagesHost();
+  const crash = getPreviousSessionReport();
+  const logCount = getLogEntries().length;
   const thresholdPercent = Math.round(settings.threshold * 100);
   const [resources, setResources] = useState<DeviceResourceInfo | null>(null);
   const [caches, setCaches] = useState<CachedModelInfo[]>([]);
@@ -446,6 +452,27 @@ export function SettingsPanel({
                 .slice(0, 6)
                 .join(", ")}${settings.dropTags.length > 6 ? " …" : ""}`
             : "追加のタグは未登録です。"}
+        </p>
+      </div>
+
+      <M3eDivider />
+
+      <div className="settings-block">
+        <div className="settings-block-head">
+          <h3 className="settings-block-title">
+            <M3eIcon name="bug_report" />
+            診断ログ
+          </h3>
+          <M3eButton type="button" variant="tonal" onClick={onOpenLog}>
+            <M3eIcon slot="icon" name="receipt_long" />
+            開く
+          </M3eButton>
+        </div>
+        <p className="settings-help">
+          {crash
+            ? `前回は${crash.analyzing ? "解析中に" : ""}強制終了しました（最後の記録: ${crash.lastMsg || "不明"}）。`
+            : "解析の各段階を端末内だけに記録します。落ちた時の直前の処理が分かります。"}
+          {logCount > 0 ? ` 現在 ${logCount} 件。` : ""}
         </p>
       </div>
       </div>

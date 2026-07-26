@@ -32,7 +32,16 @@ import {
 import { forceUncensoredTags, setCustomDropTags } from "./forceUncensored";
 import { SettingsPanel } from "./SettingsPanel";
 import { DropTagsDialog } from "./DropTagsDialog";
+import { LogDialog } from "./LogDialog";
 import { clearLastImage, loadLastImage, saveLastImage } from "./lastImage";
+import {
+  describeError,
+  getPreviousSessionReport,
+  logError,
+  logInfo,
+  logWarn,
+  markAnalyzing,
+} from "./diagnostics";
 
 type Screen = "home" | "working" | "result";
 
@@ -48,6 +57,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showDropTags, setShowDropTags] = useState(false);
+  const [showLog, setShowLog] = useState(false);
   const [apiStatus, setApiStatus] = useState<string>("準備完了 · 解析時にモデルを取得します");
   const [modelReady, setModelReady] = useState(true);
   const [loadProgress, setLoadProgress] = useState<LoadProgress | null>(null);
@@ -170,6 +180,17 @@ export default function App() {
     };
   }, []);
 
+  // Surface a hard tab kill: the log holds the last step before it happened.
+  useEffect(() => {
+    const crash = getPreviousSessionReport();
+    if (!crash) return;
+    setSnack(
+      crash.analyzing
+        ? "前回は解析中に強制終了しました。設定 → 診断ログで原因を確認できます"
+        : "前回は正常に終了していません。設定 → 診断ログを確認できます",
+    );
+  }, []);
+
   // Bring the previous image back on load, including after iOS drops the tab,
   // so a reset never means picking the same file again.
   useEffect(() => {
@@ -186,6 +207,15 @@ export default function App() {
   }, []);
 
   const pickFile = (next: File | null) => {
+    if (next) {
+      logInfo("image picked", {
+        mb: Math.round((next.size / 1e6) * 10) / 10,
+        type: next.type || "unknown",
+        name: next.name?.slice(0, 40),
+      });
+    } else {
+      logInfo("image cleared");
+    }
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setFile(next);
     setPreviewUrl(next ? URL.createObjectURL(next) : null);
@@ -196,10 +226,14 @@ export default function App() {
     setCopied(false);
     setTagVotes({});
     if (next) {
-      void saveLastImage(next);
+      void saveLastImage(next).catch((err) =>
+        logWarn("saveLastImage failed", describeError(err)),
+      );
       startTransition(() => setScreen("home"));
     } else {
-      void clearLastImage();
+      void clearLastImage().catch((err) =>
+        logWarn("clearLastImage failed", describeError(err)),
+      );
       setScreen("home");
     }
   };
@@ -246,12 +280,27 @@ export default function App() {
     setError(null);
     setCopied(false);
     setScreen("working");
+    const startedAt = performance.now();
+    markAnalyzing(true);
+    logInfo("analyze start", {
+      engine: settings.engine,
+      runMode: settings.tagRunMode,
+      models: runModels.join("+"),
+      mode: settings.mode,
+      threshold: settings.threshold,
+      imageMb: Math.round((file.size / 1e6) * 10) / 10,
+    });
     // Start every analysis from a clean heap: the button is disabled while a run
     // is in flight, so nothing is using these sessions here.
     if (settings.engine === "browser") {
       setLoadProgress(null);
       setApiStatus("メモリを解放中…");
-      await releaseAllBrowserMemory();
+      try {
+        await releaseAllBrowserMemory();
+      } catch (err) {
+        // Freeing memory is best effort; a failure here must not block the run.
+        logWarn("release before analyze failed", describeError(err));
+      }
     }
     try {
       let next: TagResult;
@@ -325,9 +374,27 @@ export default function App() {
       setPrompt(nextPrompt);
       setResult({ ...next, tags: forcedTags, prompt: nextPrompt });
       setScreen("result");
+      logInfo("analyze done", {
+        ms: performance.now() - startedAt,
+        tags: forcedTags.length,
+        device: next.device,
+      });
+      if (forcedTags.length === 0) {
+        setSnack("しきい値を超えるタグがありませんでした。設定でしきい値を下げてください");
+      }
     } catch (err) {
-      setError(formatModelLoadError(err) || "解析に失敗しました");
+      const message = formatModelLoadError(err) || "解析に失敗しました";
+      logError("analyze failed", {
+        ms: performance.now() - startedAt,
+        engine: settings.engine,
+        models: runModels.join("+"),
+        shown: message,
+        ...describeError(err),
+      });
+      setError(message);
       setScreen("home");
+    } finally {
+      markAnalyzing(false);
     }
   };
 
@@ -406,6 +473,7 @@ export default function App() {
           onChange={setSettings}
           onClose={() => setShowSettings(false)}
           onEditDropTags={() => setShowDropTags(true)}
+          onOpenLog={() => setShowLog(true)}
           onSnack={setSnack}
         />
 
@@ -414,6 +482,12 @@ export default function App() {
           tags={settings.dropTags}
           onChange={(dropTags) => setSettings((s) => ({ ...s, dropTags }))}
           onClose={() => setShowDropTags(false)}
+        />
+
+        <LogDialog
+          open={showLog}
+          onClose={() => setShowLog(false)}
+          onNotify={setSnack}
         />
 
         <header className={`brand ${showingResult ? "brand-compact" : ""}`}>
@@ -684,7 +758,15 @@ export default function App() {
 
           {error && (
             <div className="error" role="alert">
-              {error}
+              <span>{error}</span>
+              <div className="error-actions">
+                <button type="button" onClick={() => void runTag()} disabled={!canAnalyze}>
+                  再試行
+                </button>
+                <button type="button" onClick={() => setShowLog(true)}>
+                  ログを見る
+                </button>
+              </div>
             </div>
           )}
 
