@@ -134,6 +134,20 @@ export async function releaseBrowserSessions(
   await Promise.all(jobs);
 }
 
+/**
+ * Hand back everything the tagger holds: every ONNX session and the parsed tag
+ * rows. Called once before an analysis starts so the run begins from as small a
+ * heap as the tab can get back to.
+ *
+ * Inference is unchanged — weights stay on OPFS, so the next run reloads from
+ * local storage rather than downloading again.
+ */
+export async function releaseAllBrowserMemory(): Promise<void> {
+  await releaseBrowserSessions();
+  runtimes.clear();
+  await yieldForPaint(60);
+}
+
 async function yieldForPaint(ms = 50): Promise<void> {
   await new Promise<void>((resolve) => {
     requestAnimationFrame(() => {

@@ -23,6 +23,7 @@ import {
 import {
   formatModelLoadError,
   preloadBrowserTags,
+  releaseAllBrowserMemory,
   releaseBrowserSessions,
   tagEnsembleInBrowser,
   tagInBrowser,
@@ -245,6 +246,13 @@ export default function App() {
     setError(null);
     setCopied(false);
     setScreen("working");
+    // Start every analysis from a clean heap: the button is disabled while a run
+    // is in flight, so nothing is using these sessions here.
+    if (settings.engine === "browser") {
+      setLoadProgress(null);
+      setApiStatus("メモリを解放中…");
+      await releaseAllBrowserMemory();
+    }
     try {
       let next: TagResult;
       if (settings.engine === "local-api") {
