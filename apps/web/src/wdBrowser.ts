@@ -924,10 +924,63 @@ async function loadTags(
   return tags;
 }
 
+type Drawable = {
+  source: CanvasImageSource;
+  width: number;
+  height: number;
+  release: () => void;
+};
+
+/**
+ * Decode a picked file for drawing.
+ *
+ * Safari fails `createImageBitmap` for a freshly picked photo often enough that the
+ * first analyze of every new image used to error out, so fall back to an `<img>`,
+ * which decodes the same file reliably.
+ */
+async function loadDrawable(file: File): Promise<Drawable> {
+  try {
+    const bitmap = await createImageBitmap(file);
+    return {
+      source: bitmap,
+      width: bitmap.width,
+      height: bitmap.height,
+      release: () => bitmap.close(),
+    };
+  } catch {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = new Image();
+      img.src = url;
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () =>
+          reject(new Error("画像を読み込めませんでした（形式を確認してください）"));
+      });
+      if (typeof img.decode === "function") {
+        try {
+          await img.decode();
+        } catch {
+          // onload already guarantees dimensions; decode is best-effort
+        }
+      }
+      return {
+        source: img,
+        width: img.naturalWidth,
+        height: img.naturalHeight,
+        release: () => URL.revokeObjectURL(url),
+      };
+    } catch (err) {
+      URL.revokeObjectURL(url);
+      throw err;
+    }
+  }
+}
+
 /** WD v3: white-pad square, BGR NHWC 0–255 float */
 async function imageToWdTensor(file: File): Promise<ort.Tensor> {
-  const bitmap = await createImageBitmap(file);
-  const size = Math.max(bitmap.width, bitmap.height);
+  const image = await loadDrawable(file);
+  const size = Math.max(image.width, image.height);
   const canvas = document.createElement("canvas");
   canvas.width = TARGET;
   canvas.height = TARGET;
@@ -935,12 +988,12 @@ async function imageToWdTensor(file: File): Promise<ort.Tensor> {
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, TARGET, TARGET);
   const scale = TARGET / size;
-  const w = bitmap.width * scale;
-  const h = bitmap.height * scale;
+  const w = image.width * scale;
+  const h = image.height * scale;
   const x = (TARGET - w) / 2;
   const y = (TARGET - h) / 2;
-  ctx.drawImage(bitmap, x, y, w, h);
-  bitmap.close();
+  ctx.drawImage(image.source, x, y, w, h);
+  image.release();
 
   const { data } = ctx.getImageData(0, 0, TARGET, TARGET);
   const float = new Float32Array(TARGET * TARGET * 3);
@@ -954,13 +1007,13 @@ async function imageToWdTensor(file: File): Promise<ort.Tensor> {
 
 /** PixAI: stretch resize 448, RGB NCHW, normalize mean/std 0.5 */
 async function imageToPixaiTensor(file: File): Promise<ort.Tensor> {
-  const bitmap = await createImageBitmap(file);
+  const image = await loadDrawable(file);
   const canvas = document.createElement("canvas");
   canvas.width = TARGET;
   canvas.height = TARGET;
   const ctx = canvas.getContext("2d")!;
-  ctx.drawImage(bitmap, 0, 0, TARGET, TARGET);
-  bitmap.close();
+  ctx.drawImage(image.source, 0, 0, TARGET, TARGET);
+  image.release();
 
   const { data } = ctx.getImageData(0, 0, TARGET, TARGET);
   const float = new Float32Array(3 * TARGET * TARGET);

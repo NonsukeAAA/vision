@@ -57,6 +57,7 @@ export default function App() {
   const resultRef = useRef<HTMLElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const copyResetRef = useRef<number | null>(null);
+  const runAbortRef = useRef<AbortController | null>(null);
   const showingResult = screen === "result" && !!result;
   const activeModel = BROWSER_MODELS[settings.browserModel];
   const runModels =
@@ -166,7 +167,19 @@ export default function App() {
     };
   }, []);
 
+  const idleStatus = () => {
+    if (settings.engine !== "browser") return apiStatus;
+    const label =
+      settings.tagRunMode === "merge"
+        ? `結合 ${runModels.map((id) => BROWSER_MODELS[id].shortLabel).join("+")}`
+        : activeModel.shortLabel;
+    return `${label} · 解析の準備ができました`;
+  };
+
   const pickFile = (next: File | null) => {
+    // A new image starts from scratch: cancel whatever the previous one was doing.
+    runAbortRef.current?.abort();
+    runAbortRef.current = null;
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setFile(next);
     setPreviewUrl(next ? URL.createObjectURL(next) : null);
@@ -176,6 +189,12 @@ export default function App() {
     setError(null);
     setCopied(false);
     setTagVotes({});
+    setLoadProgress(null);
+    setApiStatus(idleStatus());
+    if (copyResetRef.current) {
+      window.clearTimeout(copyResetRef.current);
+      copyResetRef.current = null;
+    }
     if (next) startTransition(() => setScreen("home"));
     else setScreen("home");
   };
@@ -217,76 +236,104 @@ export default function App() {
     setCopied(false);
   }, [settings.dropTags]);
 
+  const analyzeOnce = async (
+    target: File,
+    signal: AbortSignal,
+  ): Promise<TagResult> => {
+    if (settings.engine === "local-api") {
+      setTagVotes({});
+      return tagViaApi(target, settings);
+    }
+    if (settings.tagRunMode === "merge") {
+      const ensemble = await tagEnsembleInBrowser(
+        target,
+        {
+          modelIds: settings.ensembleModels,
+          threshold: settings.threshold,
+          characterThreshold: settings.characterThreshold,
+          includeRating: settings.includeRating,
+        },
+        onWdProgress,
+        signal,
+      );
+      setTagVotes(ensemble.votes);
+      return {
+        mode: settings.mode === "hybrid" ? "booru" : settings.mode,
+        tags: ensemble.tags,
+        prompt: ensemble.prompt,
+        caption: null,
+        source: {
+          wd: ensemble.modelIds.join("+"),
+          note:
+            settings.mode === "hybrid"
+              ? "結合モード: 複数モデルの同一タグをマージ。JoyCaption はローカル API が必要です。"
+              : `結合モード: ${ensemble.modelIds.map((id) => BROWSER_MODELS[id].shortLabel).join(" + ")}`,
+        },
+        device: "wasm",
+        mock: false,
+      };
+    }
+    setTagVotes({});
+    const browser = await tagInBrowser(
+      target,
+      {
+        modelId: settings.browserModel,
+        threshold: settings.threshold,
+        characterThreshold: settings.characterThreshold,
+        includeRating: settings.includeRating,
+      },
+      onWdProgress,
+      signal,
+    );
+    return {
+      mode: settings.mode === "hybrid" ? "booru" : settings.mode,
+      tags: browser.tags,
+      prompt: browser.prompt,
+      caption: null,
+      source: {
+        wd: browser.modelId,
+        ...(settings.mode === "hybrid"
+          ? {
+              note: "GitHub Pages / ブラウザモードでは WD/PixAI タグのみ。JoyCaption 併用はローカル API を起動してください。",
+            }
+          : {}),
+      },
+      device: "wasm",
+      mock: false,
+    };
+  };
+
+  const isAbort = (err: unknown, signal: AbortSignal) =>
+    signal.aborted || (err instanceof DOMException && err.name === "AbortError");
+
   const runTag = async () => {
     if (!file) return;
+    if (settings.engine !== "local-api" && settings.mode === "caption") {
+      setError(
+        "詳細キャプション（JoyCaption）はローカル API モードが必要です。設定で engine を local-api に切り替えてください。",
+      );
+      return;
+    }
+
+    runAbortRef.current?.abort();
+    const ac = new AbortController();
+    runAbortRef.current = ac;
+    const target = file;
     setError(null);
     setCopied(false);
     setScreen("working");
     try {
       let next: TagResult;
-      if (settings.engine === "local-api") {
-        next = await tagViaApi(file, settings);
-        setTagVotes({});
-      } else {
-        if (settings.mode === "caption") {
-          throw new Error(
-            "詳細キャプション（JoyCaption）はローカル API モードが必要です。設定で engine を local-api に切り替えてください。",
-          );
-        }
-        if (settings.tagRunMode === "merge") {
-          const ensemble = await tagEnsembleInBrowser(
-            file,
-            {
-              modelIds: settings.ensembleModels,
-              threshold: settings.threshold,
-              characterThreshold: settings.characterThreshold,
-              includeRating: settings.includeRating,
-            },
-            onWdProgress,
-          );
-          setTagVotes(ensemble.votes);
-          next = {
-            mode: settings.mode === "hybrid" ? "booru" : settings.mode,
-            tags: ensemble.tags,
-            prompt: ensemble.prompt,
-            caption: null,
-            source: {
-              wd: ensemble.modelIds.join("+"),
-              note:
-                settings.mode === "hybrid"
-                  ? "結合モード: 複数モデルの同一タグをマージ。JoyCaption はローカル API が必要です。"
-                  : `結合モード: ${ensemble.modelIds.map((id) => BROWSER_MODELS[id].shortLabel).join(" + ")}`,
-            },
-            device: "wasm",
-            mock: false,
-          };
-        } else {
-          setTagVotes({});
-          const browser = await tagInBrowser(
-            file,
-            {
-              modelId: settings.browserModel,
-              threshold: settings.threshold,
-              characterThreshold: settings.characterThreshold,
-              includeRating: settings.includeRating,
-            },
-            onWdProgress,
-          );
-          next = {
-            mode: settings.mode === "hybrid" ? "booru" : settings.mode,
-            tags: browser.tags,
-            prompt: browser.prompt,
-            caption: null,
-            source: { wd: browser.modelId },
-            device: "wasm",
-            mock: false,
-          };
-          if (settings.mode === "hybrid") {
-            next.prompt = browser.prompt;
-            next.source.note =
-              "GitHub Pages / ブラウザモードでは WD/PixAI タグのみ。JoyCaption 併用はローカル API を起動してください。";
-          }
-        }
+      try {
+        next = await analyzeOnce(target, ac.signal);
+      } catch (err) {
+        if (isAbort(err, ac.signal)) throw err;
+        // The first attempt on a freshly picked image can fail on decode or on a
+        // memory hiccup; retrying immediately is what used to work by hand.
+        setApiStatus("もう一度試しています…");
+        await new Promise((r) => setTimeout(r, 300));
+        if (ac.signal.aborted) throw new DOMException("Aborted", "AbortError");
+        next = await analyzeOnce(target, ac.signal);
       }
       const forcedTags = forceUncensoredTags(next.tags);
       const nextPrompt = rebuildPrompt(forcedTags, next.caption, settings.mode);
@@ -295,8 +342,11 @@ export default function App() {
       setResult({ ...next, tags: forcedTags, prompt: nextPrompt });
       setScreen("result");
     } catch (err) {
+      if (isAbort(err, ac.signal)) return;
       setError(formatModelLoadError(err) || "解析に失敗しました");
       setScreen("home");
+    } finally {
+      if (runAbortRef.current === ac) runAbortRef.current = null;
     }
   };
 
