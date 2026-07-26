@@ -5,6 +5,7 @@ import {
   BROWSER_MODELS,
   isAppleMobileUa,
   modelHfBase,
+  modelOnnxUrl,
   type BrowserModelId,
 } from "./browserModels";
 import {
@@ -17,7 +18,7 @@ const TARGET = 448;
 const CACHE_PREFIX = "vision-tagger-v3";
 /** Cache API only for small assets (tags CSV). ONNX goes to OPFS. */
 const MAX_CACHE_BYTES = 8 * 1024 * 1024;
-const OPFS_DIR = "vision-models-v3";
+const OPFS_DIR = "vision-models-v4";
 
 type TagRow = { name: string; category: number };
 export type LoadProgress = {
@@ -475,7 +476,7 @@ async function loadSession(
     rt.sessionPromise = (async () => {
       configureOrtWasm();
       const info = BROWSER_MODELS[modelId];
-      const modelUrl = `${modelHfBase(modelId)}/model.onnx`;
+      const modelUrl = modelOnnxUrl(modelId);
       const large = info.sizeMb >= 300;
       // Prefer OPFS for all ONNX so reloads don't re-download (Cache API OOMs on large blobs).
       const useOpfs = opfsSupported();

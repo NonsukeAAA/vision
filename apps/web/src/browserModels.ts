@@ -2,11 +2,10 @@
  * Browser ONNX taggers for vision.
  *
  * WD v3 family: pad-square BGR NHWC — iPhone-friendly sizes (~170–380MB).
- * PixAI v0.9: EVA02-based, RGB NCHW normalized — stronger characters / newer IPs,
- * but ~1.2GB (PC / high-memory only; may fail on iPhone Safari).
+ * PixAI v0.9: EVA02-based, RGB NCHW normalized — character / newer IP focus.
  *
- * Note: FP32 SwinV2 (~446MB) OOMs at InferenceSession.create in most browsers;
- * we ship the public INT8 build instead (~167MB).
+ * Heavy FP32 weights are swapped for INT8 builds where needed so tabs survive
+ * InferenceSession.create (JS buffer + WASM copy ≈ 2× file size).
  */
 
 export type BrowserModelId =
@@ -23,7 +22,13 @@ export type BrowserModelInfo = {
   label: string;
   shortLabel: string;
   description: string;
+  /** Hugging Face repo used for selected_tags.csv (and default model.onnx). */
   hfRepo: string;
+  /**
+   * Optional site-relative or absolute ONNX URL override (e.g. Pages-hosted INT8).
+   * When relative, resolved against import.meta.env.BASE_URL.
+   */
+  modelUrl?: string;
   sizeMb: number;
   mobileFriendly: boolean;
   qualityRank: number;
@@ -58,7 +63,6 @@ export const BROWSER_MODELS: Record<BrowserModelId, BrowserModelInfo> = {
     label: "WD SwinV2 Tagger v3 (INT8)",
     shortLabel: "SwinV2",
     description: "高精度寄り · ブラウザ用 INT8（約167MB）",
-    // Full FP32 (~446MB) kills tabs at init (JS+WASM ≈900MB). Use public INT8 build.
     hfRepo: "KidiXDev/wd-swinv2-tagger-v3-quint8",
     sizeMb: 167,
     mobileFriendly: true,
@@ -67,12 +71,14 @@ export const BROWSER_MODELS: Record<BrowserModelId, BrowserModelInfo> = {
   "pixai-v09": {
     id: "pixai-v09",
     family: "pixai",
-    label: "PixAI Tagger v0.9",
+    label: "PixAI Tagger v0.9 (INT8)",
     shortLabel: "PixAI",
-    description: "キャラ・新作IPに強い · 約1.2GB · PC推奨",
+    description: "キャラ・新作IPに強い · ブラウザ用 INT8（約308MB）",
+    // Tags/preprocess from deepghs; weights are dynamic-INT8 hosted on Pages.
     hfRepo: "deepghs/pixai-tagger-v0.9-onnx",
-    sizeMb: 1212,
-    mobileFriendly: false,
+    modelUrl: "models/pixai-v09-int8.onnx",
+    sizeMb: 308,
+    mobileFriendly: true,
     qualityRank: 4,
   },
 };
@@ -129,4 +135,16 @@ export function sanitizeEnsembleModels(
 
 export function modelHfBase(id: BrowserModelId): string {
   return `https://huggingface.co/${BROWSER_MODELS[id].hfRepo}/resolve/main`;
+}
+
+/** ONNX weight URL (Pages INT8 override or Hugging Face). */
+export function modelOnnxUrl(id: BrowserModelId): string {
+  const info = BROWSER_MODELS[id];
+  if (info.modelUrl) {
+    if (/^https?:\/\//i.test(info.modelUrl)) return info.modelUrl;
+    const base = import.meta.env.BASE_URL || "/";
+    const path = info.modelUrl.replace(/^\//, "");
+    return new URL(path, base.endsWith("/") ? base : `${base}/`).href;
+  }
+  return `${modelHfBase(id)}/model.onnx`;
 }

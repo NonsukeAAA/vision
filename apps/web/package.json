@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "build:pages": "tsc --noEmit && vite build && node scripts/copy-pixai-int8.mjs",
     "preview": "vite preview",
     "lint": "tsc --noEmit --pretty false"
   },
