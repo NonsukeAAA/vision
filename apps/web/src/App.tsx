@@ -93,13 +93,13 @@ export default function App() {
         // Do NOT auto-download 360MB–1.2GB ONNX on open — that OOMs / aborts on mobile
         // when the user toggles models. Warm only the small tags CSV; ONNX loads on 解析.
         setApiStatus(
-          `ブラウザ推論 · ${label}（解析時に約${sizeHint}MB取得）`,
+          `ブラウザ推論 · ${label}（初回のみ約${sizeHint}MB · 以降は端末キャッシュ）`,
         );
         void preloadBrowserTags(runModels, onWdProgress, ac.signal)
           .then(() => {
             if (!ac.signal.aborted) {
               setApiStatus(
-                `${label} · 解析時にモデル取得（約${sizeHint}MB・初回のみ）`,
+                `${label} · 解析時にモデル読込（初回のみDL・以降キャッシュ）`,
               );
               setLoadProgress(null);
             }

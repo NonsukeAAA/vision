@@ -14,9 +14,10 @@ import {
 } from "./mergeTags";
 
 const TARGET = 448;
-const CACHE_PREFIX = "vision-tagger-v2";
-/** Skip Cache API for large ONNX on all devices — Response() copies and OOMs easily. */
+const CACHE_PREFIX = "vision-tagger-v3";
+/** Cache API only for small assets (tags CSV). ONNX goes to OPFS. */
 const MAX_CACHE_BYTES = 8 * 1024 * 1024;
+const OPFS_DIR = "vision-models-v3";
 
 type TagRow = { name: string; category: number };
 export type LoadProgress = {
@@ -297,63 +298,145 @@ function opfsSupported(): boolean {
   return typeof navigator !== "undefined" && !!navigator.storage?.getDirectory;
 }
 
+async function opfsModelsDir(): Promise<FileSystemDirectoryHandle> {
+  const root = await navigator.storage.getDirectory();
+  return root.getDirectoryHandle(OPFS_DIR, { create: true });
+}
+
+type OpfsModelMeta = {
+  url: string;
+  bytes: number;
+  modelId: BrowserModelId;
+  savedAt: number;
+};
+
+async function readOpfsCachedModel(
+  id: BrowserModelId,
+  url: string,
+): Promise<File | null> {
+  if (!opfsSupported()) return null;
+  try {
+    const dir = await opfsModelsDir();
+    const metaFile = await (
+      await dir.getFileHandle(`${id}.meta.json`)
+    ).getFile();
+    const meta = JSON.parse(await metaFile.text()) as OpfsModelMeta;
+    if (meta.url !== url) return null;
+    const onnx = await (await dir.getFileHandle(`${id}.onnx`)).getFile();
+    if (meta.bytes > 0 && onnx.size !== meta.bytes) return null;
+    if (onnx.size < 1_000_000) return null;
+    return onnx;
+  } catch {
+    return null;
+  }
+}
+
+async function writeOpfsMeta(
+  dir: FileSystemDirectoryHandle,
+  id: BrowserModelId,
+  meta: OpfsModelMeta,
+): Promise<void> {
+  const handle = await dir.getFileHandle(`${id}.meta.json`, { create: true });
+  const writable = await handle.createWritable();
+  await writable.write(JSON.stringify(meta));
+  await writable.close();
+}
+
 /**
- * Stream ONNX to Origin Private File System so we don't keep a ~450MB
- * Uint8Array alive while ORT copies it into the WASM heap (tab killer).
+ * Load ONNX from OPFS when present; otherwise stream-download into OPFS.
+ * Survives reloads — no need to re-download every visit.
  */
-async function fetchModelToOpfs(
+async function loadModelFilePersistent(
   id: BrowserModelId,
   url: string,
   onProgress: ProgressFn | undefined,
   label: string,
   signal?: AbortSignal,
 ): Promise<File> {
-  const root = await navigator.storage.getDirectory();
-  const dir = await root.getDirectoryHandle("vision-models", { create: true });
-  const fileName = `${id}.onnx`;
-  const handle = await dir.getFileHandle(fileName, { create: true });
+  const cached = await readOpfsCachedModel(id, url);
+  throwIfAborted(signal);
+  if (cached) {
+    emit(onProgress, {
+      phase: "model",
+      loaded: 1,
+      total: 1,
+      message: `${label}（端末キャッシュ）`,
+      modelId: id,
+    });
+    return cached;
+  }
+
+  const dir = await opfsModelsDir();
+  const handle = await dir.getFileHandle(`${id}.onnx`, { create: true });
 
   const res = await fetch(url, { signal });
   if (!res.ok) throw new Error(`${label}の取得に失敗 (${res.status})`);
-  if (!res.body) {
-    const buf = await res.arrayBuffer();
-    const writable = await handle.createWritable();
-    await writable.write(buf);
-    await writable.close();
-    return handle.getFile();
-  }
 
   const total = Number(res.headers.get("content-length") || 0);
   const writable = await handle.createWritable();
-  const reader = res.body.getReader();
   let loaded = 0;
   try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      await writable.write(value);
-      loaded += value.byteLength;
-      emit(onProgress, {
-        phase: "model",
-        loaded,
-        total: total || loaded,
-        message:
-          total > 0
-            ? `${label} ${Math.min(99, Math.round((loaded / total) * 100))}%`
-            : `${label} ${(loaded / 1e6).toFixed(1)} MB`,
-        modelId: id,
-      });
+    if (!res.body) {
+      const buf = await res.arrayBuffer();
+      await writable.write(buf);
+      loaded = buf.byteLength;
+    } else {
+      const reader = res.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        await writable.write(value);
+        loaded += value.byteLength;
+        emit(onProgress, {
+          phase: "model",
+          loaded,
+          total: total || loaded,
+          message:
+            total > 0
+              ? `${label} ${Math.min(99, Math.round((loaded / total) * 100))}%`
+              : `${label} ${(loaded / 1e6).toFixed(1)} MB`,
+          modelId: id,
+        });
+      }
     }
-  } finally {
-    await writable.close();
+  } catch (err) {
+    await writable.abort().catch(() => undefined);
+    try {
+      await dir.removeEntry(`${id}.onnx`);
+    } catch {
+      // ignore
+    }
+    throw err;
   }
+  await writable.close();
 
   if (total > 0 && loaded < total) {
+    try {
+      await dir.removeEntry(`${id}.onnx`);
+    } catch {
+      // ignore
+    }
     throw new Error(
       `${label} のダウンロードが途中で切れました（${(loaded / 1e6).toFixed(1)}/${(total / 1e6).toFixed(1)} MB）`,
     );
   }
-  return handle.getFile();
+
+  await writeOpfsMeta(dir, id, {
+    url,
+    bytes: loaded,
+    modelId: id,
+    savedAt: Date.now(),
+  });
+
+  emit(onProgress, {
+    phase: "model",
+    loaded: 1,
+    total: 1,
+    message: `${label} を端末に保存しました`,
+    modelId: id,
+  });
+
+  return (await dir.getFileHandle(`${id}.onnx`)).getFile();
 }
 
 async function createSessionFromBytesOrFile(
@@ -394,7 +477,8 @@ async function loadSession(
       const info = BROWSER_MODELS[modelId];
       const modelUrl = `${modelHfBase(modelId)}/model.onnx`;
       const large = info.sizeMb >= 300;
-      const useOpfs = large && opfsSupported();
+      // Prefer OPFS for all ONNX so reloads don't re-download (Cache API OOMs on large blobs).
+      const useOpfs = opfsSupported();
 
       // Large ONNX needs ~2× size in memory (buffer + WASM heap). Evict others first.
       if (large || isAppleMobileUa()) {
@@ -412,13 +496,13 @@ async function loadSession(
         phase: "model",
         loaded: 0,
         total: 1,
-        message: `${info.shortLabel} をダウンロード中（初回のみ・約${info.sizeMb}MB）…`,
+        message: `${info.shortLabel} を準備中（初回のみ約${info.sizeMb}MB取得）…`,
         modelId,
       });
 
       let source: Uint8Array | File;
       if (useOpfs) {
-        source = await fetchModelToOpfs(
+        source = await loadModelFilePersistent(
           modelId,
           modelUrl,
           onProgress,
