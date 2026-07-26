@@ -31,6 +31,7 @@ import {
 import { forceUncensoredTags, setCustomDropTags } from "./forceUncensored";
 import { SettingsPanel } from "./SettingsPanel";
 import { DropTagsDialog } from "./DropTagsDialog";
+import { clearLastImage, loadLastImage, saveLastImage } from "./lastImage";
 
 type Screen = "home" | "working" | "result";
 
@@ -57,6 +58,8 @@ export default function App() {
   const resultRef = useRef<HTMLElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const copyResetRef = useRef<number | null>(null);
+  const fileRef = useRef<File | null>(null);
+  fileRef.current = file;
   const showingResult = screen === "result" && !!result;
   const activeModel = BROWSER_MODELS[settings.browserModel];
   const runModels =
@@ -166,6 +169,21 @@ export default function App() {
     };
   }, []);
 
+  // Bring the previous image back on load, including after iOS drops the tab,
+  // so a reset never means picking the same file again.
+  useEffect(() => {
+    let cancelled = false;
+    void loadLastImage().then((restored) => {
+      if (cancelled || !restored || fileRef.current) return;
+      setFile(restored);
+      setPreviewUrl(URL.createObjectURL(restored));
+      setSnack("前回の画像を復元しました");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const pickFile = (next: File | null) => {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setFile(next);
@@ -176,8 +194,13 @@ export default function App() {
     setError(null);
     setCopied(false);
     setTagVotes({});
-    if (next) startTransition(() => setScreen("home"));
-    else setScreen("home");
+    if (next) {
+      void saveLastImage(next);
+      startTransition(() => setScreen("home"));
+    } else {
+      void clearLastImage();
+      setScreen("home");
+    }
   };
 
   const onDrop = (e: DragEvent) => {
