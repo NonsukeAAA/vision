@@ -1,0 +1,20 @@
+{
+  "id": "pixai-v09-q4",
+  "format": "parts",
+  "bytes": 257418048,
+  "sha256": "f3ef525171540ead952e35b3929320455410c2a81761facc91e83f76edaffaf8",
+  "parts": [
+    {
+      "name": "pixai-v09-q4.onnx.part0",
+      "bytes": 94371840
+    },
+    {
+      "name": "pixai-v09-q4.onnx.part1",
+      "bytes": 94371840
+    },
+    {
+      "name": "pixai-v09-q4.onnx.part2",
+      "bytes": 68674368
+    }
+  ]
+}
