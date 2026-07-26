@@ -1,0 +1,36 @@
+{
+  "id": "pixai-v09-fp16",
+  "format": "parts",
+  "bytes": 636088820,
+  "sha256": "31d72185685e7064ac16a2698f8ab00787f6083e5a867508fb2611e7bdf01fc9",
+  "parts": [
+    {
+      "name": "pixai-v09-fp16.onnx.part0",
+      "bytes": 94371840
+    },
+    {
+      "name": "pixai-v09-fp16.onnx.part1",
+      "bytes": 94371840
+    },
+    {
+      "name": "pixai-v09-fp16.onnx.part2",
+      "bytes": 94371840
+    },
+    {
+      "name": "pixai-v09-fp16.onnx.part3",
+      "bytes": 94371840
+    },
+    {
+      "name": "pixai-v09-fp16.onnx.part4",
+      "bytes": 94371840
+    },
+    {
+      "name": "pixai-v09-fp16.onnx.part5",
+      "bytes": 94371840
+    },
+    {
+      "name": "pixai-v09-fp16.onnx.part6",
+      "bytes": 69857780
+    }
+  ]
+}
