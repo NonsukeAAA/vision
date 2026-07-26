@@ -988,6 +988,7 @@ async function runOneModel(
   const family = BROWSER_MODELS[modelId].family;
   const info = BROWSER_MODELS[modelId];
   const large = info.sizeMb >= 300;
+  const warm = hasWarmBrowserSession(modelId);
 
   // Large / iPhone: sequential load reduces peak RAM vs Promise.all.
   let session: ort.InferenceSession;
@@ -995,6 +996,15 @@ async function runOneModel(
   if (large || isAppleMobileUa()) {
     tags = await loadTags(modelId, onProgress, signal);
     await yieldForPaint(40);
+    if (warm) {
+      emit(onProgress, {
+        phase: "ready",
+        loaded: 1,
+        total: 1,
+        message: `${info.shortLabel}（セッション再利用）`,
+        modelId,
+      });
+    }
     session = await loadSession(modelId, onProgress, signal);
   } else {
     [session, tags] = await Promise.all([
@@ -1019,7 +1029,10 @@ async function runOneModel(
     : [session.outputNames[0]];
   const output = await session.run({ [inputName]: input }, fetches);
   const out = pickOutput(session, output);
-  const probs = out.data as Float32Array;
+  // Copy off WASM heap before disposing tensors / any later session teardown.
+  const probs = Float32Array.from(out.data as Float32Array);
+  out.dispose();
+  input.dispose();
 
   const categoryMap: Record<number, string> = {
     0: "general",
@@ -1044,15 +1057,17 @@ async function runOneModel(
   }
   results.sort((a, b) => b.score - a.score);
 
-  // Drop tensor views ASAP, then free WASM for the next model / UI.
-  out.dispose();
-  input.dispose();
-
-  if (large || isAppleMobileUa()) {
-    await releaseBrowserSessions();
-  }
+  // Do NOT release the session after a successful single-model run.
+  // Safari rarely returns WASM linear memory; recreate-after-release OOMs
+  // on the 2nd/3rd PixAI init even when the JS heap can grow to ~4GB.
+  // Sessions are released when switching models or between ensemble members.
 
   return { modelId, tags: results };
+}
+
+/** True if an InferenceSession is already loaded for this model. */
+export function hasWarmBrowserSession(id: BrowserModelId): boolean {
+  return !!runtimes.get(id)?.sessionPromise;
 }
 
 /** Warm tags CSV only (small). Full ONNX waits until analyze / explicit preload. */
@@ -1156,6 +1171,10 @@ export async function tagEnsembleInBrowser(
       modelId: id,
     });
     parts.push(await runOneModel(file, id, opts, onProgress, signal));
+    // Free this member before the next init — Safari cannot re-grow WASM forever.
+    if (i < ids.length - 1) {
+      await releaseBrowserSessions();
+    }
   }
 
   const merged = mergeTagScores(parts);

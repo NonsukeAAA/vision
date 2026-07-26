@@ -22,7 +22,9 @@ import {
 } from "./types";
 import {
   formatModelLoadError,
+  hasWarmBrowserSession,
   preloadBrowserTags,
+  releaseBrowserSessions,
   tagEnsembleInBrowser,
   tagInBrowser,
   type LoadProgress,
@@ -83,16 +85,27 @@ export default function App() {
           settings.tagRunMode === "merge"
             ? runModels.reduce((s, id) => s + BROWSER_MODELS[id].sizeMb, 0)
             : activeModel.sizeMb;
-        // Do NOT auto-download 360MB–1.2GB ONNX on open — that OOMs / aborts on mobile
-        // when the user toggles models. Warm only the small tags CSV; ONNX loads on 解析.
+        // Drop sessions for models we are not about to use (Safari WASM is sticky).
+        const keep =
+          settings.tagRunMode === "merge" ? undefined : settings.browserModel;
+        if (settings.tagRunMode === "single") {
+          void releaseBrowserSessions(keep);
+        }
+        const warm =
+          settings.tagRunMode === "single" &&
+          hasWarmBrowserSession(settings.browserModel);
         setApiStatus(
-          `ブラウザ推論 · ${label}（初回のみ約${sizeHint}MB · 以降は端末キャッシュ）`,
+          warm
+            ? `ブラウザ推論 · ${label}（セッション準備済 · 追加DLなし）`
+            : `ブラウザ推論 · ${label}（初回のみ約${sizeHint}MB · 以降は端末キャッシュ）`,
         );
         void preloadBrowserTags(runModels, onWdProgress, ac.signal)
           .then(() => {
             if (!ac.signal.aborted) {
               setApiStatus(
-                `${label} · 解析時にモデル読込（初回のみDL・以降キャッシュ）`,
+                warm
+                  ? `${label} · すぐ解析できます`
+                  : `${label} · 解析時にモデル読込（初回のみDL・以降キャッシュ）`,
               );
               setLoadProgress(null);
             }
