@@ -1,0 +1,24 @@
+{
+  "id": "pixai-v09-int8",
+  "format": "parts",
+  "bytes": 322602569,
+  "sha256": "a41c64cb814e1f36fa2345ebc325658a255936a467b838593cda2e87758b0763",
+  "parts": [
+    {
+      "name": "pixai-v09-int8.onnx.part0",
+      "bytes": 94371840
+    },
+    {
+      "name": "pixai-v09-int8.onnx.part1",
+      "bytes": 94371840
+    },
+    {
+      "name": "pixai-v09-int8.onnx.part2",
+      "bytes": 94371840
+    },
+    {
+      "name": "pixai-v09-int8.onnx.part3",
+      "bytes": 39487049
+    }
+  ]
+}
