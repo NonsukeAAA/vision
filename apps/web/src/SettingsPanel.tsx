@@ -38,7 +38,8 @@ import {
 } from "./forceUncensored";
 import { GROK_MODELS } from "./grokPrompt";
 import {
-  HELPER_DOWNLOAD_PATH,
+  HELPER_DOWNLOAD_MACOS,
+  HELPER_DOWNLOAD_WINDOWS,
   JOY_CAPTION_MODELS,
 } from "./joyModels";
 import { pingHelper, startHelperApi, stopHelperApi } from "./helperApi";
@@ -182,8 +183,8 @@ export function SettingsPanel({
       {onPages && (
         <p className="settings-banner">
           GitHub Pages ではタグ解析は端末内で行います。JoyCaption
-          は下の Windows ヘルパーを起動すると、このページからローカル API
-          に接続できます。
+          は下の PC ヘルパー（Windows / Mac）を起動すると、このページからローカル
+          API に接続できます。
         </p>
       )}
 
@@ -416,7 +417,7 @@ export function SettingsPanel({
         {settings.engine === "local-api" && (
           <>
             <p className="settings-help">
-              Windows ヘルパー、または <code>./scripts/dev.sh</code>{" "}
+              Windows / Mac ヘルパー、または <code>./scripts/dev.sh</code>{" "}
               で API を起動してください。未起動の場合は自動でブラウザ推論に戻ります。
             </p>
             <label className="settings-field">
@@ -446,10 +447,10 @@ export function SettingsPanel({
             </M3eButton>
           </div>
           <p className="settings-help">
-            Windows 向け常駐ヘルパーです。先に ZIP を入れて{" "}
-            <code>VisionHelper.bat</code>{" "}
-            をダブルクリックしてから、下の起動ボタンを押します。Docker Desktop
-            推奨（なければ Python 3.12+）。
+            PC 向け常駐ヘルパーです。ZIP を解凍してから起動ファイルを開いてください。
+            Windows は <code>VisionHelper.bat</code>、Mac は{" "}
+            <code>VisionHelper.command</code>（初回は右クリック → 開く）。
+            Docker Desktop 推奨（なければ Python 3.12+）。
           </p>
           <p className="settings-help">状態: {helperMsg}</p>
           <label className="settings-field">
@@ -477,17 +478,34 @@ export function SettingsPanel({
               variant="tonal"
               onClick={() => {
                 const base = import.meta.env.BASE_URL || "/";
-                const path = `${base.replace(/\/?$/, "/")}${HELPER_DOWNLOAD_PATH}`;
+                const path = `${base.replace(/\/?$/, "/")}${HELPER_DOWNLOAD_WINDOWS}`;
                 const a = document.createElement("a");
                 a.href = path;
                 a.download = "vision-helper-windows.zip";
                 a.rel = "noopener";
                 a.click();
-                onSnack("ヘルパー ZIP のダウンロードを開始しました");
+                onSnack("Windows ヘルパー ZIP のダウンロードを開始しました");
               }}
             >
               <M3eIcon slot="icon" name="download" />
-              Windows ヘルパーを入手
+              Windows
+            </M3eButton>
+            <M3eButton
+              type="button"
+              variant="tonal"
+              onClick={() => {
+                const base = import.meta.env.BASE_URL || "/";
+                const path = `${base.replace(/\/?$/, "/")}${HELPER_DOWNLOAD_MACOS}`;
+                const a = document.createElement("a");
+                a.href = path;
+                a.download = "vision-helper-macos.zip";
+                a.rel = "noopener";
+                a.click();
+                onSnack("Mac ヘルパー ZIP のダウンロードを開始しました");
+              }}
+            >
+              <M3eIcon slot="icon" name="download" />
+              Mac (.command)
             </M3eButton>
             <M3eButton
               type="button"

@@ -1,6 +1,6 @@
 /**
  * JoyCaption Hugging Face repos the helper / local API can load.
- * Keep in sync with helper-windows/models.json.
+ * Keep in sync with helper-windows/models.json and helper-macos/models.json.
  */
 export const JOY_CAPTION_MODELS = [
   {
@@ -33,6 +33,9 @@ export function joyCaptionRepoForId(id: string): string {
   return found?.repo ?? JOY_CAPTION_MODELS[0].repo;
 }
 
-/** Local helper control plane (Windows resident). */
+/** Local helper control plane (Windows / macOS resident). */
 export const HELPER_BASE = "http://127.0.0.1:8765";
-export const HELPER_DOWNLOAD_PATH = "helper/vision-helper-windows.zip";
+export const HELPER_DOWNLOAD_WINDOWS = "helper/vision-helper-windows.zip";
+export const HELPER_DOWNLOAD_MACOS = "helper/vision-helper-macos.zip";
+/** @deprecated use HELPER_DOWNLOAD_WINDOWS */
+export const HELPER_DOWNLOAD_PATH = HELPER_DOWNLOAD_WINDOWS;

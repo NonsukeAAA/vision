@@ -93,7 +93,7 @@ export async function startHelperApi(opts: {
       running: false,
       apiReady: false,
       message:
-        "ヘルパーに接続できません。ダウンロードした VisionHelper.bat を先に起動してください",
+        "ヘルパーに接続できません。先に VisionHelper.bat（Windows）または VisionHelper.command（Mac）を起動してください",
     };
   }
 }

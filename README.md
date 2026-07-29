@@ -23,8 +23,10 @@
 
 Pages 上の既定エンジンは **ブラウザ (WD14 / PixAI)** です。JoyCaption を使う場合:
 
-1. 設定 → **Windows ヘルパーを入手** で ZIP をダウンロード
-2. 解凍して `VisionHelper.bat` をダブルクリック（常駐）
+1. 設定 → **Windows** または **Mac (.command)** で ZIP をダウンロード
+2. 解凍して起動ファイルを開く
+   - Windows: `VisionHelper.bat`
+   - Mac: `VisionHelper.command`（初回は右クリック → 開く）
 3. 設定で JoyCaption モデルを選び **JoyCaption を起動**
 4. 自動で `local-api`（`http://127.0.0.1:8000`）に切り替わります
 
