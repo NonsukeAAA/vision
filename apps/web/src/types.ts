@@ -62,16 +62,36 @@ export type AppSettings = {
   grokModel: string;
 };
 
-const STORAGE_KEY = "vision.settings.v7";
+/**
+ * Stable key — schema changes must NOT rename this, or deploys look like a wipe.
+ * Older `vision.settings.vN` keys are still read and folded in.
+ */
+const STORAGE_KEY = "vision.settings";
+const BACKUP_KEY = "vision.settings.backup";
 const LEGACY_STORAGE_KEYS = [
+  "vision.settings.v7",
   "vision.settings.v6",
   "vision.settings.v5",
   "vision.settings.v4",
   "vision.settings.v3",
   "vision.settings.v2",
 ];
+
 /** Guard against a pathological list slowing every tag filter. */
 const MAX_TAG_LIST = 300;
+
+/**
+ * If an older ero-boost pack is already on the insert list, fold in any new
+ * pack members (e.g. after a deploy) without forcing the preset on everyone.
+ */
+const ERO_BOOST_LEGACY_MARKERS = [
+  "night",
+  "dark",
+  "dim lighting",
+  "intimate",
+  "erotic",
+  "sensual",
+] as const;
 
 export function isGitHubPagesHost(): boolean {
   if (typeof window === "undefined") return false;
@@ -115,47 +135,167 @@ export function sanitizeDropTags(value: unknown): string[] {
   return sanitizeTagList(value);
 }
 
+function readRaw(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function parseObject(raw: string | null): Record<string, unknown> | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Newest source first. A later (older) blob only fills holes — empty strings /
+ * empty arrays in a newer save never erase populated older values.
+ */
+function coalesceSettings(
+  ...sources: Array<Record<string, unknown> | null>
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const src of sources) {
+    if (!src) continue;
+    for (const [key, value] of Object.entries(src)) {
+      if (value === undefined || value === null) continue;
+      if (!(key in out)) {
+        out[key] = value;
+        continue;
+      }
+      const existing = out[key];
+      if (typeof existing === "string" && existing.trim() === "") {
+        if (typeof value === "string" && value.trim() !== "") out[key] = value;
+        continue;
+      }
+      if (Array.isArray(existing) && existing.length === 0) {
+        if (Array.isArray(value) && value.length > 0) out[key] = value;
+      }
+    }
+  }
+  return out;
+}
+
+/** Must stay in sync with ERO_BOOST_TAGS in forceUncensored.ts */
+const ERO_BOOST_CURRENT = [
+  "night",
+  "dark",
+  "dim lighting",
+  "cinematic lighting",
+  "soft shadows",
+  "depth of field",
+  "shallow depth of field",
+  "bokeh",
+  "blurry background",
+  "selective focus",
+  "intimate",
+  "erotic",
+  "sensual",
+  "veiny huge insertion",
+] as const;
+
+function upgradeInsertPresets(tags: string[]): string[] {
+  const have = new Set(tags);
+  if (!ERO_BOOST_LEGACY_MARKERS.every((t) => have.has(t))) return tags;
+  const next = [...tags];
+  for (const tag of ERO_BOOST_CURRENT) {
+    if (!have.has(tag)) {
+      have.add(tag);
+      next.push(tag);
+    }
+  }
+  return next;
+}
+
+function normalizeSettings(parsed: Record<string, unknown> | null): AppSettings {
+  const merged: AppSettings = parsed
+    ? { ...defaultSettings(), ...(parsed as Partial<AppSettings>) }
+    : defaultSettings();
+  merged.browserModel = resolveBrowserModel(
+    isBrowserModelId(merged.browserModel)
+      ? merged.browserModel
+      : DEFAULT_BROWSER_MODEL,
+  );
+  merged.tagRunMode = merged.tagRunMode === "merge" ? "merge" : "single";
+  merged.ensembleModels = sanitizeEnsembleModels(merged.ensembleModels);
+  merged.dropTags = sanitizeTagList(merged.dropTags);
+  merged.insertTags = upgradeInsertPresets(sanitizeTagList(merged.insertTags));
+  merged.insertQualityTags = merged.insertQualityTags !== false;
+  merged.xaiApiKey =
+    typeof merged.xaiApiKey === "string" ? merged.xaiApiKey.trim() : "";
+  merged.grokModel = isGrokModelId(merged.grokModel)
+    ? merged.grokModel
+    : "grok-3-mini";
+  if (isGitHubPagesHost() && merged.engine === "local-api") {
+    return { ...merged, engine: "browser" };
+  }
+  return merged;
+}
+
+function allStoredBlobs(): Array<Record<string, unknown> | null> {
+  // Newest → oldest. coalesceSettings applies in this order so newer wins,
+  // while empty newer fields fall back to older populated ones.
+  return [
+    parseObject(readRaw(STORAGE_KEY)),
+    parseObject(readRaw(BACKUP_KEY)),
+    ...LEGACY_STORAGE_KEYS.map((key) => parseObject(readRaw(key))),
+  ];
+}
+
 export function loadSettings(): AppSettings {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    const legacy = raw
-      ? null
-      : LEGACY_STORAGE_KEYS.map((key) => localStorage.getItem(key)).find(
-          (v) => !!v,
-        ) ?? null;
-    const parsed = raw
-      ? JSON.parse(raw)
-      : legacy
-        ? JSON.parse(legacy)
-        : null;
-    const merged: AppSettings = parsed
-      ? { ...defaultSettings(), ...parsed }
-      : defaultSettings();
-    merged.browserModel = resolveBrowserModel(
-      isBrowserModelId(merged.browserModel)
-        ? merged.browserModel
-        : DEFAULT_BROWSER_MODEL,
-    );
-    merged.tagRunMode =
-      merged.tagRunMode === "merge" ? "merge" : "single";
-    merged.ensembleModels = sanitizeEnsembleModels(merged.ensembleModels);
-    merged.dropTags = sanitizeTagList(merged.dropTags);
-    merged.insertTags = sanitizeTagList(merged.insertTags);
-    merged.insertQualityTags = merged.insertQualityTags !== false;
-    merged.xaiApiKey =
-      typeof merged.xaiApiKey === "string" ? merged.xaiApiKey.trim() : "";
-    merged.grokModel = isGrokModelId(merged.grokModel)
-      ? merged.grokModel
-      : "grok-3-mini";
-    if (isGitHubPagesHost() && merged.engine === "local-api") {
-      return { ...merged, engine: "browser" };
+    const coalesced = coalesceSettings(...allStoredBlobs());
+    const hasAny = Object.keys(coalesced).length > 0;
+    const settings = normalizeSettings(hasAny ? coalesced : null);
+    // Immediately rewrite to the stable key + backup so the next deploy never
+    // depends on a versioned key that might get forgotten.
+    if (hasAny) {
+      persistAll(settings);
     }
-    return merged;
+    return settings;
   } catch {
+    // Last resort: try backup alone before wiping to defaults.
+    try {
+      const backup = normalizeSettings(parseObject(readRaw(BACKUP_KEY)));
+      if (backup.xaiApiKey || backup.insertTags.length || backup.dropTags.length) {
+        persistAll(backup);
+        return backup;
+      }
+    } catch {
+      // ignore
+    }
     return defaultSettings();
   }
 }
 
+function persistAll(settings: AppSettings): void {
+  const payload = JSON.stringify(settings);
+  try {
+    localStorage.setItem(STORAGE_KEY, payload);
+  } catch {
+    // quota / private mode
+  }
+  try {
+    localStorage.setItem(BACKUP_KEY, payload);
+  } catch {
+    // ignore
+  }
+  // Keep the last versioned key in sync too, for older builds that only know v7.
+  try {
+    localStorage.setItem("vision.settings.v7", payload);
+  } catch {
+    // ignore
+  }
+}
+
 export function saveSettings(settings: AppSettings): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+  persistAll(settings);
 }

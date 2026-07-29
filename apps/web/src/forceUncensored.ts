@@ -172,6 +172,7 @@ export const ERO_BOOST_TAGS = [
   "intimate",
   "erotic",
   "sensual",
+  "veiny huge insertion",
 ] as const;
 
 /** Merge a preset pack into an insert list without duplicates. */
