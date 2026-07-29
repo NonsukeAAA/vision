@@ -155,6 +155,7 @@ export const QUALITY_INSERT_TAGS = [
 
 /**
  * Night darkness + cinematic erotic mood — soft and intimate, not theatrical.
+ * Includes shallow depth-of-field cues so the subject stays soft-focused in the dark.
  * Avoids dramatic / high-contrast / spotlight cues that pull generations loud.
  */
 export const ERO_BOOST_TAGS = [
@@ -164,6 +165,10 @@ export const ERO_BOOST_TAGS = [
   "cinematic lighting",
   "soft shadows",
   "depth of field",
+  "shallow depth of field",
+  "bokeh",
+  "blurry background",
+  "selective focus",
   "intimate",
   "erotic",
   "sensual",
