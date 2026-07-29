@@ -45,16 +45,24 @@ export type AppSettings = {
   enableWd: boolean;
   /** Extra tags to strip from results, on top of the built-in rules. */
   dropTags: string[];
+  /**
+   * Extra tags prepended to every result (after uncensored / quality).
+   * Edited from the insert-tags modal in settings.
+   */
+  insertTags: string[];
+  /** When true, prepend illustration quality tags (masterpiece, best quality, …). */
+  insertQualityTags: boolean;
 };
 
-const STORAGE_KEY = "vision.settings.v5";
+const STORAGE_KEY = "vision.settings.v6";
 const LEGACY_STORAGE_KEYS = [
+  "vision.settings.v5",
   "vision.settings.v4",
   "vision.settings.v3",
   "vision.settings.v2",
 ];
 /** Guard against a pathological list slowing every tag filter. */
-const MAX_DROP_TAGS = 300;
+const MAX_TAG_LIST = 300;
 
 export function isGitHubPagesHost(): boolean {
   if (typeof window === "undefined") return false;
@@ -74,19 +82,26 @@ export const defaultSettings = (): AppSettings => ({
   enableJoy: true,
   enableWd: true,
   dropTags: [],
+  insertTags: [],
+  insertQualityTags: true,
 });
 
-/** Trim, lowercase, de-duplicate and cap a user-entered drop list. */
-export function sanitizeDropTags(value: unknown): string[] {
+/** Trim, lowercase, de-duplicate and cap a user-entered tag list. */
+export function sanitizeTagList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
   for (const entry of value) {
     if (typeof entry !== "string") continue;
     const tag = entry.trim().toLowerCase().replaceAll("_", " ").replace(/\s+/g, " ");
     if (tag) seen.add(tag);
-    if (seen.size >= MAX_DROP_TAGS) break;
+    if (seen.size >= MAX_TAG_LIST) break;
   }
   return [...seen];
+}
+
+/** @deprecated Prefer {@link sanitizeTagList}. Kept for call sites still named for drops. */
+export function sanitizeDropTags(value: unknown): string[] {
+  return sanitizeTagList(value);
 }
 
 export function loadSettings(): AppSettings {
@@ -113,7 +128,9 @@ export function loadSettings(): AppSettings {
     merged.tagRunMode =
       merged.tagRunMode === "merge" ? "merge" : "single";
     merged.ensembleModels = sanitizeEnsembleModels(merged.ensembleModels);
-    merged.dropTags = sanitizeDropTags(merged.dropTags);
+    merged.dropTags = sanitizeTagList(merged.dropTags);
+    merged.insertTags = sanitizeTagList(merged.insertTags);
+    merged.insertQualityTags = merged.insertQualityTags !== false;
     if (isGitHubPagesHost() && merged.engine === "local-api") {
       return { ...merged, engine: "browser" };
     }

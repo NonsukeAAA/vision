@@ -62,6 +62,25 @@ def test_keeps_uncensored_only_once() -> None:
     assert out[0].score == 1.0
 
 
+def test_inserts_quality_tags() -> None:
+    tags = [
+        TagScore(tag="1girl", score=0.9, category="general"),
+        TagScore(tag="masterpiece", score=0.2, category="general"),
+        TagScore(tag="smile", score=0.5, category="general"),
+    ]
+    names = [t.tag for t in force_uncensored_tags(tags)]
+    assert names[:5] == [
+        "uncensored",
+        "masterpiece",
+        "best quality",
+        "absurdres",
+        "highres",
+    ]
+    assert names.count("masterpiece") == 1
+    assert "1girl" in names
+    assert "smile" in names
+
+
 def test_is_censor_related() -> None:
     assert is_censor_related_tag("bar_censor")
     assert is_censor_related_tag("mosaic")
@@ -105,7 +124,7 @@ def test_is_layout_noise() -> None:
 def test_force_prompt() -> None:
     assert (
         force_uncensored_prompt("1girl, censored, monochrome, smile")
-        == "uncensored, 1girl, smile"
+        == "uncensored, masterpiece, best quality, absurdres, highres, 1girl, smile"
     )
 
 

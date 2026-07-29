@@ -29,9 +29,10 @@ import {
   tagInBrowser,
   type LoadProgress,
 } from "./wdBrowser";
-import { forceUncensoredTags, setCustomDropTags } from "./forceUncensored";
+import { forceUncensoredTags, forcedPrefixTags, setCustomDropTags, setCustomInsertTags, setInsertQualityEnabled } from "./forceUncensored";
 import { SettingsPanel } from "./SettingsPanel";
 import { DropTagsDialog } from "./DropTagsDialog";
+import { InsertTagsDialog } from "./InsertTagsDialog";
 import { LogDialog } from "./LogDialog";
 import { clearLastImage, loadLastImage, saveLastImage } from "./lastImage";
 import {
@@ -57,6 +58,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showDropTags, setShowDropTags] = useState(false);
+  const [showInsertTags, setShowInsertTags] = useState(false);
   const [showLog, setShowLog] = useState(false);
   // A hard tab kill leaves no error to show, so the last session's verdict gets
   // its own banner instead of a snack that another message can overwrite.
@@ -257,15 +259,18 @@ export default function App() {
     return tagPart;
   };
 
-  // The drop list lives in a module-level registry because the ONNX layer filters too.
+  // The drop / insert lists live in a module-level registry because the ONNX
+  // layer filters too — App just keeps them in sync with settings.
   useEffect(() => {
     setCustomDropTags(settings.dropTags);
+    setCustomInsertTags(settings.insertTags);
+    setInsertQualityEnabled(settings.insertQualityTags);
     if (editableTags.length === 0) return;
     const next = forceUncensoredTags(editableTags);
     setEditableTags(next);
     setPrompt(rebuildPrompt(next, result?.caption ?? null, settings.mode));
     setCopied(false);
-  }, [settings.dropTags]);
+  }, [settings.dropTags, settings.insertTags, settings.insertQualityTags]);
 
   const runTag = async () => {
     if (!file) return;
@@ -465,6 +470,7 @@ export default function App() {
           onChange={setSettings}
           onClose={() => setShowSettings(false)}
           onEditDropTags={() => setShowDropTags(true)}
+          onEditInsertTags={() => setShowInsertTags(true)}
           onOpenLog={() => setShowLog(true)}
           onSnack={setSnack}
         />
@@ -474,6 +480,14 @@ export default function App() {
           tags={settings.dropTags}
           onChange={(dropTags) => setSettings((s) => ({ ...s, dropTags }))}
           onClose={() => setShowDropTags(false)}
+        />
+
+        <InsertTagsDialog
+          open={showInsertTags}
+          tags={settings.insertTags}
+          qualityEnabled={settings.insertQualityTags}
+          onChange={(insertTags) => setSettings((s) => ({ ...s, insertTags }))}
+          onClose={() => setShowInsertTags(false)}
         />
 
         <LogDialog
@@ -835,15 +849,21 @@ export default function App() {
                     </button>
                   </div>
                   <div className="chip-wrap">
-                    {editableTags.map((t) => (
+                    {editableTags.map((t) => {
+                      const locked = forcedPrefixTags().includes(
+                        t.tag.trim().toLowerCase().replaceAll("_", " "),
+                      );
+                      return (
                       <button
                         key={t.tag}
                         type="button"
-                        className={`tag-chip ${t.tag === "uncensored" ? "tag-locked" : ""}`}
-                        onClick={() => removeTag(t.tag)}
+                        className={`tag-chip ${locked ? "tag-locked" : ""}`}
+                        onClick={() => {
+                          if (!locked) removeTag(t.tag);
+                        }}
                         title={
-                          t.tag === "uncensored"
-                            ? "uncensored は常に付与されます"
+                          locked
+                            ? "設定の挿入タグから変更できます"
                             : tagVotes[t.tag]
                               ? `${tagVotes[t.tag]}モデルが一致 · クリックで削除`
                               : "クリックで削除"
@@ -855,7 +875,8 @@ export default function App() {
                         )}
                         <span className="score">{t.score.toFixed(2)}</span>
                       </button>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}

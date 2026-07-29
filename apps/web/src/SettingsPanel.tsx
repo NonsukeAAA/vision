@@ -29,6 +29,7 @@ import {
   type AppSettings,
 } from "./types";
 import { getLogEntries, getPreviousSessionReport } from "./diagnostics";
+import { QUALITY_INSERT_TAGS } from "./forceUncensored";
 type Props = {
   open: boolean;
   settings: AppSettings;
@@ -36,6 +37,8 @@ type Props = {
   onClose: () => void;
   /** Opens the drop-tag list, which App renders as its own modal. */
   onEditDropTags: () => void;
+  /** Opens the insert-tag list, also an App-level modal. */
+  onEditInsertTags: () => void;
   /** Opens the diagnostics log, also an App-level modal. */
   onOpenLog: () => void;
   onSnack: (message: string) => void;
@@ -61,6 +64,7 @@ export function SettingsPanel({
   onChange,
   onClose,
   onEditDropTags,
+  onEditInsertTags,
   onOpenLog,
   onSnack,
 }: Props) {
@@ -452,6 +456,43 @@ export function SettingsPanel({
                 .slice(0, 6)
                 .join(", ")}${settings.dropTags.length > 6 ? " …" : ""}`
             : "追加のタグは未登録です。"}
+        </p>
+      </div>
+
+      <M3eDivider />
+
+      <div className="settings-block">
+        <div className="settings-block-head">
+          <h3 className="settings-block-title">
+            <M3eIcon name="auto_awesome" />
+            挿入タグ
+          </h3>
+          <M3eButton type="button" variant="tonal" onClick={onEditInsertTags}>
+            <M3eIcon slot="icon" name="edit" />
+            編集
+          </M3eButton>
+        </div>
+        <label className="settings-switch">
+          <span>画質アップタグを自動挿入</span>
+          <M3eSwitch
+            checked={settings.insertQualityTags}
+            onChange={(e) => {
+              const el = e.currentTarget as HTMLElement & {
+                checked?: boolean;
+              };
+              patch({ insertQualityTags: !!el.checked });
+            }}
+          />
+        </label>
+        <p className="settings-help">
+          {settings.insertQualityTags
+            ? `イラスト向けに ${QUALITY_INSERT_TAGS.join(", ")} を先頭付近へ入れます。`
+            : "画質アップタグはオフです。"}
+          {settings.insertTags.length > 0
+            ? ` 追加で ${settings.insertTags.length} 件を挿入中: ${settings.insertTags
+                .slice(0, 6)
+                .join(", ")}${settings.insertTags.length > 6 ? " …" : ""}`
+            : " 任意のタグは未登録です。"}
         </p>
       </div>
 

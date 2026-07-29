@@ -143,26 +143,90 @@ export function shouldDropOutputTag(tag: string): boolean {
 }
 
 /**
- * Drop mosaic/censor and monochrome/comic tags; ensure `uncensored` is present.
+ * Illustration-oriented quality boosters. Placed after `uncensored` and before
+ * the model tags so SD / Illustrious-style checkpoints pick them up first.
+ */
+export const QUALITY_INSERT_TAGS = [
+  "masterpiece",
+  "best quality",
+  "absurdres",
+  "highres",
+] as const;
+
+/** User-managed insert list, edited in settings. Same module-level reason as drops. */
+const customInsertTags: string[] = [];
+let insertQualityEnabled = true;
+
+export function setCustomInsertTags(tags: Iterable<string>): void {
+  customInsertTags.length = 0;
+  const seen = new Set<string>();
+  for (const tag of tags) {
+    const n = normalizeTag(tag);
+    if (!n || seen.has(n)) continue;
+    seen.add(n);
+    customInsertTags.push(n);
+  }
+}
+
+export function getCustomInsertTags(): string[] {
+  return [...customInsertTags];
+}
+
+export function setInsertQualityEnabled(enabled: boolean): void {
+  insertQualityEnabled = enabled;
+}
+
+export function isInsertQualityEnabled(): boolean {
+  return insertQualityEnabled;
+}
+
+/** Forced prefix tags, in display order, without duplicates. */
+export function forcedPrefixTags(): string[] {
+  const out: string[] = ["uncensored"];
+  const seen = new Set(out);
+  if (insertQualityEnabled) {
+    for (const tag of QUALITY_INSERT_TAGS) {
+      if (seen.has(tag)) continue;
+      seen.add(tag);
+      out.push(tag);
+    }
+  }
+  for (const tag of customInsertTags) {
+    if (seen.has(tag)) continue;
+    seen.add(tag);
+    out.push(tag);
+  }
+  return out;
+}
+
+/**
+ * Drop mosaic/censor and monochrome/comic tags; ensure `uncensored` and the
+ * configured insert tags sit at the front.
  */
 export function forceUncensoredTags(tags: TagScore[]): TagScore[] {
   const filtered = tags.filter((t) => !shouldDropOutputTag(t.tag));
-  const withoutUncensored = filtered.filter(
-    (t) => normalizeTag(t.tag) !== "uncensored",
+  const prefix = forcedPrefixTags();
+  const prefixSet = new Set(prefix);
+  const withoutPrefix = filtered.filter(
+    (t) => !prefixSet.has(normalizeTag(t.tag)),
   );
   return [
-    { tag: "uncensored", score: 1, category: "general" },
-    ...withoutUncensored,
+    ...prefix.map(
+      (tag): TagScore => ({ tag, score: 1, category: "general" }),
+    ),
+    ...withoutPrefix,
   ];
 }
 
-/** Rebuild comma-separated prompt with noise tags removed and uncensored first. */
+/** Rebuild comma-separated prompt with noise tags removed and inserts first. */
 export function forceUncensoredPrompt(prompt: string): string {
+  const prefix = forcedPrefixTags();
+  const prefixSet = new Set(prefix);
   const parts = prompt
     .split(",")
     .map((p) => p.trim())
     .filter(Boolean)
     .filter((p) => !shouldDropOutputTag(p))
-    .filter((p) => normalizeTag(p) !== "uncensored");
-  return ["uncensored", ...parts].join(", ");
+    .filter((p) => !prefixSet.has(normalizeTag(p)));
+  return [...prefix, ...parts].join(", ");
 }

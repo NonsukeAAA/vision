@@ -108,21 +108,40 @@ def should_drop_output_tag(tag: str) -> bool:
     )
 
 
+# Illustration-oriented quality boosters. Kept in sync with the web client.
+_QUALITY_INSERT_TAGS = (
+    "masterpiece",
+    "best quality",
+    "absurdres",
+    "highres",
+)
+
+
+def forced_prefix_tags() -> list[str]:
+    return ["uncensored", *_QUALITY_INSERT_TAGS]
+
+
 def force_uncensored_tags(tags: list[TagScore]) -> list[TagScore]:
-    """Drop censor / monochrome-comic tags and force `uncensored` at the front."""
+    """Drop censor / monochrome-comic tags; put uncensored + quality tags first."""
     filtered = [t for t in tags if not should_drop_output_tag(t.tag)]
-    without = [t for t in filtered if normalize_tag(t.tag) != "uncensored"]
-    return [TagScore(tag="uncensored", score=1.0, category="general"), *without]
+    prefix = forced_prefix_tags()
+    prefix_set = {normalize_tag(t) for t in prefix}
+    without = [t for t in filtered if normalize_tag(t.tag) not in prefix_set]
+    return [
+        TagScore(tag=tag, score=1.0, category="general") for tag in prefix
+    ] + without
 
 
 def force_uncensored_prompt(prompt: str) -> str:
+    prefix = forced_prefix_tags()
+    prefix_set = {normalize_tag(t) for t in prefix}
     parts = [p.strip() for p in prompt.split(",") if p.strip()]
     parts = [
         p
         for p in parts
-        if not should_drop_output_tag(p) and normalize_tag(p) != "uncensored"
+        if not should_drop_output_tag(p) and normalize_tag(p) not in prefix_set
     ]
-    return ", ".join(["uncensored", *parts])
+    return ", ".join([*prefix, *parts])
 
 
 _CAPTION_NOISE_RE = re.compile(
