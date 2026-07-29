@@ -30,6 +30,7 @@ import {
   type LoadProgress,
 } from "./wdBrowser";
 import { forceUncensoredTags, forcedPrefixTags, setCustomDropTags, setCustomInsertTags, setInsertQualityEnabled } from "./forceUncensored";
+import { generateSdPromptWithGrok } from "./grokPrompt";
 import { SettingsPanel } from "./SettingsPanel";
 import { DropTagsDialog } from "./DropTagsDialog";
 import { InsertTagsDialog } from "./InsertTagsDialog";
@@ -68,6 +69,7 @@ export default function App() {
   const [loadProgress, setLoadProgress] = useState<LoadProgress | null>(null);
   const [snack, setSnack] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [grokBusy, setGrokBusy] = useState(false);
   const [tagVotes, setTagVotes] = useState<Record<string, number>>({});
   const [, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -407,6 +409,40 @@ export default function App() {
     setPrompt(next);
     setCopied(false);
     setSnack("タグからプロンプトを再生成しました");
+  };
+
+  const runGrokPrompt = async () => {
+    if (grokBusy) return;
+    if (!settings.xaiApiKey.trim()) {
+      setSnack("設定で xAI API キーを入力してください（従量課金）");
+      setShowSettings(true);
+      return;
+    }
+    const tags = editableTags.map((t) => t.tag);
+    if (tags.length === 0 && !prompt.trim()) {
+      setSnack("先に画像を解析してください");
+      return;
+    }
+    setGrokBusy(true);
+    try {
+      const out = await generateSdPromptWithGrok({
+        apiKey: settings.xaiApiKey,
+        model: settings.grokModel,
+        tags,
+        currentPrompt: prompt,
+        caption: result?.caption ?? null,
+      });
+      setPrompt(out.prompt);
+      setCopied(false);
+      setSnack(`Grok がプロンプトを作成しました（${out.model}）`);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Grok プロンプト生成に失敗しました";
+      setError(message);
+      setSnack(message);
+    } finally {
+      setGrokBusy(false);
+    }
   };
 
   const copyPrompt = async () => {
@@ -806,9 +842,24 @@ export default function App() {
                   <label className="prompt-label" htmlFor="prompt-field">
                     プロンプト
                   </label>
-                  <span className="muted result-sub">
-                    {tagCount > 0 ? `${tagCount} tags` : "編集可"}
-                  </span>
+                  <div className="prompt-actions">
+                    <button
+                      type="button"
+                      className="btn-text"
+                      onClick={() => void runGrokPrompt()}
+                      disabled={grokBusy}
+                      title={
+                        settings.xaiApiKey.trim()
+                          ? "Grok で SD 用プロンプトを作成（従量課金）"
+                          : "設定で xAI API キーが必要です"
+                      }
+                    >
+                      {grokBusy ? "Grok 生成中…" : "Grokで作成"}
+                    </button>
+                    <span className="muted result-sub">
+                      {tagCount > 0 ? `${tagCount} tags` : "編集可"}
+                    </span>
+                  </div>
                 </div>
                 <div className="prompt-shell">
                   <textarea
@@ -888,9 +939,17 @@ export default function App() {
           <div className="action-dock" role="region" aria-label="コピー">
             <button
               type="button"
-              className={`btn btn-primary btn-block btn-dock-copy ${copied ? "is-copied" : ""}`}
+              className="btn btn-tonal btn-dock-grok"
+              onClick={() => void runGrokPrompt()}
+              disabled={grokBusy}
+            >
+              {grokBusy ? "Grok 生成中…" : "Grokで作成"}
+            </button>
+            <button
+              type="button"
+              className={`btn btn-primary btn-dock-copy ${copied ? "is-copied" : ""}`}
               onClick={() => void copyPrompt()}
-              disabled={!prompt.trim()}
+              disabled={!prompt.trim() || grokBusy}
             >
               {copied ? "コピーしました" : "コピー"}
             </button>

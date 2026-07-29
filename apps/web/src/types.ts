@@ -6,6 +6,7 @@ import {
   sanitizeEnsembleModels,
   type BrowserModelId,
 } from "./browserModels";
+import { isGrokModelId } from "./grokPrompt";
 
 export type OutputMode = "booru" | "caption" | "hybrid";
 export type InferenceEngine = "browser" | "local-api";
@@ -52,10 +53,18 @@ export type AppSettings = {
   insertTags: string[];
   /** When true, prepend illustration quality tags (masterpiece, best quality, …). */
   insertQualityTags: boolean;
+  /**
+   * xAI API key for Grok SD prompt generation (BYOK, pay-as-you-go).
+   * Stored only in this browser's localStorage; never uploaded to our servers.
+   */
+  xaiApiKey: string;
+  /** Grok model id used for prompt rewriting. */
+  grokModel: string;
 };
 
-const STORAGE_KEY = "vision.settings.v6";
+const STORAGE_KEY = "vision.settings.v7";
 const LEGACY_STORAGE_KEYS = [
+  "vision.settings.v6",
   "vision.settings.v5",
   "vision.settings.v4",
   "vision.settings.v3",
@@ -84,6 +93,8 @@ export const defaultSettings = (): AppSettings => ({
   dropTags: [],
   insertTags: [],
   insertQualityTags: true,
+  xaiApiKey: "",
+  grokModel: "grok-3-mini",
 });
 
 /** Trim, lowercase, de-duplicate and cap a user-entered tag list. */
@@ -131,6 +142,11 @@ export function loadSettings(): AppSettings {
     merged.dropTags = sanitizeTagList(merged.dropTags);
     merged.insertTags = sanitizeTagList(merged.insertTags);
     merged.insertQualityTags = merged.insertQualityTags !== false;
+    merged.xaiApiKey =
+      typeof merged.xaiApiKey === "string" ? merged.xaiApiKey.trim() : "";
+    merged.grokModel = isGrokModelId(merged.grokModel)
+      ? merged.grokModel
+      : "grok-3-mini";
     if (isGitHubPagesHost() && merged.engine === "local-api") {
       return { ...merged, engine: "browser" };
     }

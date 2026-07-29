@@ -36,6 +36,7 @@ import {
   QUALITY_INSERT_TAGS,
   removeInsertPreset,
 } from "./forceUncensored";
+import { GROK_MODELS } from "./grokPrompt";
 type Props = {
   open: boolean;
   settings: AppSettings;
@@ -453,6 +454,69 @@ export function SettingsPanel({
             />
           </label>
         )}
+      </div>
+
+      <M3eDivider />
+
+      <div className="settings-block">
+        <h3 className="settings-block-title">
+          <M3eIcon name="auto_awesome" />
+          Grok プロンプト
+        </h3>
+        <p className="settings-help">
+          解析タグから Stable Diffusion 用プロンプトを Grok に書かせます。
+          xAI の従量課金 API キーが必要です（月額固定ではありません）。キーはこの端末だけに保存し、xAI 以外へは送りません。
+        </p>
+        <label className="settings-field">
+          <span>xAI API キー</span>
+          <input
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="xai-…"
+            value={settings.xaiApiKey}
+            onChange={(e) => patch({ xaiApiKey: e.target.value })}
+          />
+          <span className="settings-help">
+            <a
+              href="https://console.x.ai"
+              target="_blank"
+              rel="noreferrer"
+            >
+              console.x.ai
+            </a>
+            で取得。未設定でもタグ解析自体は使えます。
+          </span>
+        </label>
+        <label className="settings-field">
+          <span>モデル</span>
+          <select
+            value={settings.grokModel}
+            onChange={(e) => patch({ grokModel: e.target.value })}
+          >
+            {GROK_MODELS.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+          <span className="settings-help">
+            普段は Mini / Fast が安くて十分です。
+          </span>
+        </label>
+        {settings.xaiApiKey.trim() ? (
+          <M3eButton
+            type="button"
+            variant="text"
+            onClick={() => {
+              patch({ xaiApiKey: "" });
+              onSnack("API キーを削除しました");
+            }}
+          >
+            <M3eIcon slot="icon" name="key_off" />
+            キーを削除
+          </M3eButton>
+        ) : null}
       </div>
 
       <M3eDivider />
