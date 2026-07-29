@@ -29,7 +29,13 @@ import {
   type AppSettings,
 } from "./types";
 import { getLogEntries, getPreviousSessionReport } from "./diagnostics";
-import { QUALITY_INSERT_TAGS } from "./forceUncensored";
+import {
+  ERO_BOOST_TAGS,
+  insertPresetActive,
+  mergeInsertPreset,
+  QUALITY_INSERT_TAGS,
+  removeInsertPreset,
+} from "./forceUncensored";
 type Props = {
   open: boolean;
   settings: AppSettings;
@@ -92,6 +98,19 @@ export function SettingsPanel({
 
   const patch = (partial: Partial<AppSettings>) => {
     onChange((s) => ({ ...s, ...partial }));
+  };
+
+  const eroOn = insertPresetActive(settings.insertTags, ERO_BOOST_TAGS);
+  const toggleEroBoost = () => {
+    const insertTags = eroOn
+      ? removeInsertPreset(settings.insertTags, ERO_BOOST_TAGS)
+      : mergeInsertPreset(settings.insertTags, ERO_BOOST_TAGS);
+    patch({ insertTags });
+    onSnack(
+      eroOn
+        ? "ero boost を解除しました"
+        : "ero boost を挿入タグに追加しました",
+    );
   };
 
   const removeCache = async (id: BrowserModelId) => {
@@ -484,6 +503,21 @@ export function SettingsPanel({
             }}
           />
         </label>
+        <div className="insert-presets settings-presets">
+          <M3eButton
+            type="button"
+            variant={eroOn ? "filled" : "tonal"}
+            className="ero-boost-btn"
+            onClick={toggleEroBoost}
+          >
+            <M3eIcon slot="icon" name={eroOn ? "nightlife" : "dark_mode"} />
+            ero boost
+          </M3eButton>
+          <p className="settings-help">
+            夜の暗闇とシネマティックなエロいムード（ドラマチックではない）。
+            {eroOn ? " 適用中 · 再押下で解除。" : ""}
+          </p>
+        </div>
         <p className="settings-help">
           {settings.insertQualityTags
             ? `イラスト向けに ${QUALITY_INSERT_TAGS.join(", ")} を先頭付近へ入れます。`

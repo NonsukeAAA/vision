@@ -153,6 +153,57 @@ export const QUALITY_INSERT_TAGS = [
   "highres",
 ] as const;
 
+/**
+ * Night darkness + cinematic erotic mood — soft and intimate, not theatrical.
+ * Avoids dramatic / high-contrast / spotlight cues that pull generations loud.
+ */
+export const ERO_BOOST_TAGS = [
+  "night",
+  "dark",
+  "dim lighting",
+  "cinematic lighting",
+  "soft shadows",
+  "depth of field",
+  "intimate",
+  "erotic",
+  "sensual",
+] as const;
+
+/** Merge a preset pack into an insert list without duplicates. */
+export function mergeInsertPreset(
+  current: readonly string[],
+  preset: readonly string[],
+): string[] {
+  const next = current.map((t) => normalizeTag(t)).filter(Boolean);
+  const seen = new Set(next);
+  for (const tag of preset) {
+    const n = normalizeTag(tag);
+    if (!n || seen.has(n)) continue;
+    seen.add(n);
+    next.push(n);
+  }
+  return next;
+}
+
+/** Drop every tag from a preset pack (other custom tags stay). */
+export function removeInsertPreset(
+  current: readonly string[],
+  preset: readonly string[],
+): string[] {
+  const drop = new Set(preset.map((t) => normalizeTag(t)));
+  return current
+    .map((t) => normalizeTag(t))
+    .filter((t) => t && !drop.has(t));
+}
+
+export function insertPresetActive(
+  current: readonly string[],
+  preset: readonly string[],
+): boolean {
+  const have = new Set(current.map((t) => normalizeTag(t)));
+  return preset.every((t) => have.has(normalizeTag(t)));
+}
+
 /** User-managed insert list, edited in settings. Same module-level reason as drops. */
 const customInsertTags: string[] = [];
 let insertQualityEnabled = true;

@@ -5,7 +5,14 @@ import { M3eInputChip } from "@m3e/react/chips";
 import { M3eSuggestionChip } from "@m3e/react/chips";
 import { M3eDialog } from "@m3e/react/dialog";
 import { M3eIcon } from "@m3e/react/icon";
-import { normalizeTag, QUALITY_INSERT_TAGS } from "./forceUncensored";
+import {
+  ERO_BOOST_TAGS,
+  insertPresetActive,
+  mergeInsertPreset,
+  normalizeTag,
+  QUALITY_INSERT_TAGS,
+  removeInsertPreset,
+} from "./forceUncensored";
 
 type Props = {
   open: boolean;
@@ -38,6 +45,7 @@ export function InsertTagsDialog({
 }: Props) {
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const eroOn = insertPresetActive(tags, ERO_BOOST_TAGS);
 
   useEffect(() => {
     if (!open) setDraft("");
@@ -62,6 +70,14 @@ export function InsertTagsDialog({
     onChange(tags.filter((t) => t !== tag));
   };
 
+  const toggleEroBoost = () => {
+    onChange(
+      eroOn
+        ? removeInsertPreset(tags, ERO_BOOST_TAGS)
+        : mergeInsertPreset(tags, ERO_BOOST_TAGS),
+    );
+  };
+
   return (
     <M3eDialog
       className="drop-tags-dialog"
@@ -78,6 +94,24 @@ export function InsertTagsDialog({
           ここに入れたタグは解析結果とプロンプトの先頭付近に自動で入ります。
           大文字・アンダースコアは区別しません。
         </p>
+
+        <div className="insert-presets">
+          <M3eButton
+            type="button"
+            variant={eroOn ? "filled" : "tonal"}
+            className="ero-boost-btn"
+            onClick={toggleEroBoost}
+          >
+            <M3eIcon slot="icon" name={eroOn ? "nightlife" : "dark_mode"} />
+            ero boost
+          </M3eButton>
+          <p className="settings-help">
+            夜の暗闇とシネマティックなエロいムード（ドラマチックではない）。
+            {eroOn
+              ? " もう一度押すと解除。"
+              : ` ${ERO_BOOST_TAGS.length} タグを追加。`}
+          </p>
+        </div>
 
         <form
           className="drop-tags-form"
@@ -156,6 +190,15 @@ export function InsertTagsDialog({
                 </em>
               </span>
             </li>
+            {eroOn ? (
+              <li>
+                <M3eIcon name="nightlife" />
+                <span>
+                  <strong>ero boost</strong>
+                  <em>{ERO_BOOST_TAGS.join(", ")}</em>
+                </span>
+              </li>
+            ) : null}
           </ul>
         </div>
       </div>

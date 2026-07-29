@@ -1056,6 +1056,19 @@ select {
   gap: var(--space-lg);
 }
 
+.insert-presets {
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.settings-presets {
+  margin-top: var(--space-sm);
+}
+
+.ero-boost-btn {
+  justify-self: start;
+}
+
 .drop-tags-form {
   display: flex;
   gap: var(--space-sm);
