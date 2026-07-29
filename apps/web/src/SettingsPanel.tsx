@@ -37,6 +37,11 @@ import {
   removeInsertPreset,
 } from "./forceUncensored";
 import { GROK_MODELS } from "./grokPrompt";
+import {
+  HELPER_DOWNLOAD_PATH,
+  JOY_CAPTION_MODELS,
+} from "./joyModels";
+import { pingHelper, startHelperApi, stopHelperApi } from "./helperApi";
 type Props = {
   open: boolean;
   settings: AppSettings;
@@ -82,6 +87,22 @@ export function SettingsPanel({
   const [resources, setResources] = useState<DeviceResourceInfo | null>(null);
   const [caches, setCaches] = useState<CachedModelInfo[]>([]);
   const [busy, setBusy] = useState(false);
+  const [helperBusy, setHelperBusy] = useState(false);
+  const [helperMsg, setHelperMsg] = useState<string>("未確認");
+
+  const refreshHelper = useCallback(async () => {
+    const st = await pingHelper();
+    if (!st.ok) {
+      setHelperMsg(st.message || "ヘルパー未起動");
+      return st;
+    }
+    setHelperMsg(
+      st.apiReady
+        ? `API OK${st.joyRepo ? ` · ${st.joyRepo.split("/").pop()}` : ""}${st.backend ? ` · ${st.backend}` : ""}`
+        : st.message || "ヘルパー待機中",
+    );
+    return st;
+  }, []);
 
   const refresh = useCallback(async () => {
     const [info, models] = await Promise.all([
@@ -90,7 +111,8 @@ export function SettingsPanel({
     ]);
     setResources(info);
     setCaches(models);
-  }, []);
+    void refreshHelper();
+  }, [refreshHelper]);
 
   useEffect(() => {
     if (!open) return;
@@ -159,8 +181,9 @@ export function SettingsPanel({
       <div className="settings-sheet">
       {onPages && (
         <p className="settings-banner">
-          GitHub Pages では画像を端末内で解析します。JoyCaption は PC で API
-          起動後、「ローカル API」を選んでください。
+          GitHub Pages ではタグ解析は端末内で行います。JoyCaption
+          は下の Windows ヘルパーを起動すると、このページからローカル API
+          に接続できます。
         </p>
       )}
 
@@ -393,8 +416,8 @@ export function SettingsPanel({
         {settings.engine === "local-api" && (
           <>
             <p className="settings-help">
-              事前に <code>./scripts/dev.sh</code> などで API
-              を起動してください。未起動の場合は自動でブラウザ推論に戻ります。
+              Windows ヘルパー、または <code>./scripts/dev.sh</code>{" "}
+              で API を起動してください。未起動の場合は自動でブラウザ推論に戻ります。
             </p>
             <label className="settings-field">
               <span>API Base URL</span>
@@ -406,6 +429,126 @@ export function SettingsPanel({
             </label>
           </>
         )}
+
+        <div className="settings-block nested-block">
+          <div className="settings-block-head">
+            <h3 className="settings-block-title">
+              <M3eIcon name="desktop_windows" />
+              JoyCaption（PC ヘルパー）
+            </h3>
+            <M3eButton
+              type="button"
+              variant="text"
+              disabled={helperBusy}
+              onClick={() => void refreshHelper()}
+            >
+              状態更新
+            </M3eButton>
+          </div>
+          <p className="settings-help">
+            Windows 向け常駐ヘルパーです。先に ZIP を入れて{" "}
+            <code>VisionHelper.bat</code>{" "}
+            をダブルクリックしてから、下の起動ボタンを押します。Docker Desktop
+            推奨（なければ Python 3.12+）。
+          </p>
+          <p className="settings-help">状態: {helperMsg}</p>
+          <label className="settings-field">
+            <span>JoyCaption モデル</span>
+            <select
+              value={settings.joyCaptionModel}
+              onChange={(e) => patch({ joyCaptionModel: e.target.value })}
+            >
+              {JOY_CAPTION_MODELS.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+            <span className="settings-help">
+              {
+                JOY_CAPTION_MODELS.find((m) => m.id === settings.joyCaptionModel)
+                  ?.hint
+              }
+            </span>
+          </label>
+          <div className="helper-actions">
+            <M3eButton
+              type="button"
+              variant="tonal"
+              onClick={() => {
+                const base = import.meta.env.BASE_URL || "/";
+                const path = `${base.replace(/\/?$/, "/")}${HELPER_DOWNLOAD_PATH}`;
+                const a = document.createElement("a");
+                a.href = path;
+                a.download = "vision-helper-windows.zip";
+                a.rel = "noopener";
+                a.click();
+                onSnack("ヘルパー ZIP のダウンロードを開始しました");
+              }}
+            >
+              <M3eIcon slot="icon" name="download" />
+              Windows ヘルパーを入手
+            </M3eButton>
+            <M3eButton
+              type="button"
+              variant="filled"
+              disabled={helperBusy}
+              onClick={() => {
+                void (async () => {
+                  setHelperBusy(true);
+                  try {
+                    const st = await startHelperApi({
+                      joyModelId: settings.joyCaptionModel,
+                      enableJoy: true,
+                    });
+                    setHelperMsg(st.message || (st.ok ? "起動しました" : "失敗"));
+                    if (st.apiReady || st.ok) {
+                      patch({
+                        engine: "local-api",
+                        apiBase: "http://127.0.0.1:8000",
+                        enableJoy: true,
+                      });
+                      onSnack(
+                        st.apiReady
+                          ? "JoyCaption API に接続しました"
+                          : st.message || "起動を依頼しました",
+                      );
+                    } else {
+                      onSnack(st.message || "ヘルパーを先に起動してください");
+                    }
+                    await refreshHelper();
+                  } finally {
+                    setHelperBusy(false);
+                  }
+                })();
+              }}
+            >
+              <M3eIcon slot="icon" name="play_arrow" />
+              {helperBusy ? "起動中…" : "JoyCaption を起動"}
+            </M3eButton>
+            <M3eButton
+              type="button"
+              variant="outlined"
+              disabled={helperBusy}
+              onClick={() => {
+                void (async () => {
+                  setHelperBusy(true);
+                  try {
+                    const st = await stopHelperApi();
+                    setHelperMsg(st.message || "停止");
+                    onSnack("ローカル API の停止を依頼しました");
+                    await refreshHelper();
+                  } finally {
+                    setHelperBusy(false);
+                  }
+                })();
+              }}
+            >
+              <M3eIcon slot="icon" name="stop" />
+              API を停止
+            </M3eButton>
+          </div>
+        </div>
 
         <label className="settings-field">
           <span>一般タグ閾値 ({thresholdPercent}%)</span>

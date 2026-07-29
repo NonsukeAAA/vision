@@ -7,6 +7,10 @@ import {
   type BrowserModelId,
 } from "./browserModels";
 import { isGrokModelId } from "./grokPrompt";
+import {
+  DEFAULT_JOY_CAPTION_MODEL,
+  isJoyCaptionModelId,
+} from "./joyModels";
 
 export type OutputMode = "booru" | "caption" | "hybrid";
 export type InferenceEngine = "browser" | "local-api";
@@ -60,6 +64,8 @@ export type AppSettings = {
   xaiApiKey: string;
   /** Grok model id used for prompt rewriting. */
   grokModel: string;
+  /** JoyCaption HF model preset id (used by local helper / API). */
+  joyCaptionModel: string;
 };
 
 /**
@@ -115,6 +121,7 @@ export const defaultSettings = (): AppSettings => ({
   insertQualityTags: true,
   xaiApiKey: "",
   grokModel: "grok-3-mini",
+  joyCaptionModel: DEFAULT_JOY_CAPTION_MODEL,
 });
 
 /** Trim, lowercase, de-duplicate and cap a user-entered tag list. */
@@ -234,9 +241,10 @@ function normalizeSettings(parsed: Record<string, unknown> | null): AppSettings 
   merged.grokModel = isGrokModelId(merged.grokModel)
     ? merged.grokModel
     : "grok-3-mini";
-  if (isGitHubPagesHost() && merged.engine === "local-api") {
-    return { ...merged, engine: "browser" };
-  }
+  merged.joyCaptionModel = isJoyCaptionModelId(merged.joyCaptionModel)
+    ? merged.joyCaptionModel
+    : DEFAULT_JOY_CAPTION_MODEL;
+  // Pages may still use local-api when the Windows helper is running on :8000.
   return merged;
 }
 

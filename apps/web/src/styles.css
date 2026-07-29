@@ -1077,9 +1077,22 @@ select {
   gap: var(--space-lg);
 }
 
-.insert-presets {
-  display: grid;
-  gap: var(--space-xs);
+.helper-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+.nested-block {
+  margin-top: var(--space-md);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--line-strong, rgba(0, 0, 0, 0.08));
+}
+
+.settings-help code {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
 }
 
 .settings-presets {

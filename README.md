@@ -21,7 +21,22 @@
 4. 公開 URL: `https://<user>.github.io/<repo>/`  
    （`VITE_BASE_PATH` はワークフローがリポジトリ名から自動設定）
 
-Pages 上の既定エンジンは **ブラウザ (WD14)** です。JoyCaption 併用はローカル API を起動し、設定で `local-api` に切り替えてください（ブラウザから `http://127.0.0.1:8000` へ接続。CORS 許可済み）。
+Pages 上の既定エンジンは **ブラウザ (WD14 / PixAI)** です。JoyCaption を使う場合:
+
+1. 設定 → **Windows ヘルパーを入手** で ZIP をダウンロード
+2. 解凍して `VisionHelper.bat` をダブルクリック（常駐）
+3. 設定で JoyCaption モデルを選び **JoyCaption を起動**
+4. 自動で `local-api`（`http://127.0.0.1:8000`）に切り替わります
+
+Docker Desktop 推奨。なければ Python 3.12+。初回はモデル取得で時間がかかります。
+
+開発時は従来どおり:
+
+```bash
+./scripts/dev.sh
+```
+
+CORS は `*.github.io` を許可済みです。
 
 ## ローカル開発
 
