@@ -890,15 +890,17 @@ export default function App() {
         <div className="stack">
           {previewUrl ? (
             <div className="image-hero">
-              <button
-                type="button"
-                className="image-hero-frame"
-                onClick={() => inputRef.current?.click()}
-                title="画像を変更"
-                aria-label="画像を変更"
-              >
-                <img src={previewUrl} alt="選択中の画像" />
-              </button>
+              <div className="image-hero-stage">
+                <button
+                  type="button"
+                  className="image-hero-frame"
+                  onClick={() => inputRef.current?.click()}
+                  title="画像を変更"
+                  aria-label="画像を変更"
+                >
+                  <img src={previewUrl} alt="選択中の画像" />
+                </button>
+              </div>
               <div className="image-hero-bar">
                 <p className="muted image-hero-meta">
                   {showingResult
