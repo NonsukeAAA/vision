@@ -6,7 +6,6 @@ import {
   sanitizeEnsembleModels,
   type BrowserModelId,
 } from "./browserModels";
-import { isGrokModelId } from "./grokPrompt";
 import {
   DEFAULT_JOY_CAPTION_MODEL,
   isJoyCaptionModelId,
@@ -57,13 +56,6 @@ export type AppSettings = {
   insertTags: string[];
   /** When true, prepend illustration quality tags (masterpiece, best quality, …). */
   insertQualityTags: boolean;
-  /**
-   * xAI API key for Grok SD prompt generation (BYOK, pay-as-you-go).
-   * Stored only in this browser's localStorage; never uploaded to our servers.
-   */
-  xaiApiKey: string;
-  /** Grok model id used for prompt rewriting. */
-  grokModel: string;
   /** JoyCaption HF model preset id (used by local helper / API). */
   joyCaptionModel: string;
   /** Show Japanese gloss under each result tag chip. */
@@ -126,8 +118,6 @@ export const defaultSettings = (): AppSettings => ({
   dropTags: [],
   insertTags: [],
   insertQualityTags: true,
-  xaiApiKey: "",
-  grokModel: "grok-3-mini",
   joyCaptionModel: DEFAULT_JOY_CAPTION_MODEL,
   showTagJa: true,
   supabaseAnonKey: "",
@@ -245,11 +235,9 @@ function normalizeSettings(parsed: Record<string, unknown> | null): AppSettings 
   merged.dropTags = sanitizeTagList(merged.dropTags);
   merged.insertTags = upgradeInsertPresets(sanitizeTagList(merged.insertTags));
   merged.insertQualityTags = merged.insertQualityTags !== false;
-  merged.xaiApiKey =
-    typeof merged.xaiApiKey === "string" ? merged.xaiApiKey.trim() : "";
-  merged.grokModel = isGrokModelId(merged.grokModel)
-    ? merged.grokModel
-    : "grok-3-mini";
+  // Drop legacy Grok / xAI fields if present in older localStorage blobs.
+  delete (merged as { xaiApiKey?: unknown }).xaiApiKey;
+  delete (merged as { grokModel?: unknown }).grokModel;
   merged.joyCaptionModel = isJoyCaptionModelId(merged.joyCaptionModel)
     ? merged.joyCaptionModel
     : DEFAULT_JOY_CAPTION_MODEL;
@@ -287,7 +275,7 @@ export function loadSettings(): AppSettings {
     // Last resort: try backup alone before wiping to defaults.
     try {
       const backup = normalizeSettings(parseObject(readRaw(BACKUP_KEY)));
-      if (backup.xaiApiKey || backup.insertTags.length || backup.dropTags.length) {
+      if (backup.insertTags.length || backup.dropTags.length) {
         persistAll(backup);
         return backup;
       }

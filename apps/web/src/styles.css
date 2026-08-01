@@ -141,7 +141,8 @@ select {
 }
 
 .app-shell.has-dock {
-  padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(88px + constant(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
 }
 
 .toolbar {
@@ -1514,11 +1515,16 @@ select {
   gap: var(--space-sm);
   width: min(440px, 100%);
   transform: translateX(-50%);
-  padding: var(--space-sm) var(--space-md) calc(var(--space-sm) + env(safe-area-inset-bottom, 0px));
+  /* Keep the copy button above the iPhone home indicator. */
+  padding: var(--space-sm) var(--space-md)
+    calc(var(--space-md) + constant(safe-area-inset-bottom, 0px));
+  padding: var(--space-sm) var(--space-md)
+    calc(var(--space-md) + env(safe-area-inset-bottom, 0px));
+  box-sizing: border-box;
   background: linear-gradient(
     to top,
-    rgba(244, 246, 248, 0.97) 60%,
-    rgba(244, 246, 248, 0.75) 100%
+    rgba(244, 246, 248, 0.98) 55%,
+    rgba(244, 246, 248, 0.78) 100%
   );
   animation: dock-in 320ms var(--ease) both;
 }
@@ -1597,15 +1603,9 @@ select {
   cursor: nwse-resize;
 }
 
-.btn-dock-grok {
-  flex: 0 0 auto;
-  min-height: var(--btn-h);
-  padding-inline: 1rem;
-  font-size: 0.875rem;
-}
-
 .btn-dock-copy {
   flex: 1 1 auto;
+  width: 100%;
   min-height: var(--btn-h);
   font-size: 1rem;
 }
@@ -1626,7 +1626,8 @@ select {
 }
 
 .snack-above-dock {
-  bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(80px + constant(safe-area-inset-bottom, 0px));
+  bottom: calc(80px + env(safe-area-inset-bottom, 0px));
 }
 
 .panel {

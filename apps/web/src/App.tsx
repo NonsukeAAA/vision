@@ -27,7 +27,6 @@ import {
   type LoadProgress,
 } from "./wdBrowser";
 import { forceUncensoredTags, forcedPrefixTags, setCustomDropTags, setCustomInsertTags, setInsertQualityEnabled } from "./forceUncensored";
-import { generateSdPromptWithGrok } from "./grokPrompt";
 import { ensureTagJaLoaded, isTagJaReady } from "./tagJa";
 import { SettingsPanel } from "./SettingsPanel";
 import { DropTagsDialog } from "./DropTagsDialog";
@@ -98,7 +97,6 @@ export default function App() {
   const [loadProgress, setLoadProgress] = useState<LoadProgress | null>(null);
   const [snack, setSnack] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [grokBusy, setGrokBusy] = useState(false);
   const [tagJaReady, setTagJaReady] = useState(() => isTagJaReady());
   const [tagVotes, setTagVotes] = useState<Record<string, number>>({});
   const [libraryStatus, setLibraryStatus] = useState<LibraryStatus>({
@@ -704,41 +702,6 @@ export default function App() {
     }
   };
 
-  const runGrokPrompt = async () => {
-    if (grokBusy) return;
-    if (!settings.xaiApiKey.trim()) {
-      setSnack("設定で xAI API キーを入力してください（従量課金）");
-      setShowSettings(true);
-      return;
-    }
-    const tags = editableTags.map((t) => t.tag);
-    if (tags.length === 0 && !prompt.trim()) {
-      setSnack("先に画像を解析してください");
-      return;
-    }
-    setGrokBusy(true);
-    try {
-      const out = await generateSdPromptWithGrok({
-        apiKey: settings.xaiApiKey,
-        model: settings.grokModel,
-        tags,
-        currentPrompt: prompt,
-        caption: result?.caption ?? null,
-      });
-      setPrompt(out.prompt);
-      setCopied(false);
-      scheduleSessionSave(editableTagsRef.current, out.prompt);
-      setSnack(`Grok がプロンプトを作成しました（${out.model}）`);
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Grok プロンプト生成に失敗しました";
-      setError(message);
-      setSnack(message);
-    } finally {
-      setGrokBusy(false);
-    }
-  };
-
   const promptFromTags = () =>
     editableTags
       .map((t) => t.tag)
@@ -1235,17 +1198,9 @@ export default function App() {
           <div className="action-dock" role="region" aria-label="コピー">
             <button
               type="button"
-              className="btn btn-tonal btn-dock-grok"
-              onClick={() => void runGrokPrompt()}
-              disabled={grokBusy}
-            >
-              {grokBusy ? "Grok 生成中…" : "Grokで作成"}
-            </button>
-            <button
-              type="button"
               className={`btn btn-primary btn-dock-copy ${copied ? "is-copied" : ""}`}
               onClick={() => void copyPrompt()}
-              disabled={(!tagCount && !prompt.trim()) || grokBusy}
+              disabled={!tagCount && !prompt.trim()}
             >
               {copied ? "コピーしました" : "コピー"}
             </button>

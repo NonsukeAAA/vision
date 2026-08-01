@@ -29,7 +29,6 @@ import {
   QUALITY_INSERT_TAGS,
   removeInsertPreset,
 } from "./forceUncensored";
-import { GROK_MODELS } from "./grokPrompt";
 import { probeSupabaseSync, type SyncStatus } from "./supabaseClient";
 import { isTagLibraryReady } from "./tagLibrary";
 
@@ -354,39 +353,6 @@ export function SettingsPanel({
               ? ` 追加 ${settings.insertTags.length} 件。`
               : ""}
           </p>
-        </div>
-
-        <M3eDivider />
-
-        <div className="settings-block">
-          <h3 className="settings-block-title">
-            <M3eIcon name="key" />
-            Grok（任意）
-          </h3>
-          <label className="settings-field">
-            <span>xAI API キー</span>
-            <input
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              placeholder="xai-…"
-              value={settings.xaiApiKey}
-              onChange={(e) => patch({ xaiApiKey: e.target.value })}
-            />
-          </label>
-          <label className="settings-field">
-            <span>モデル</span>
-            <select
-              value={settings.grokModel}
-              onChange={(e) => patch({ grokModel: e.target.value })}
-            >
-              {GROK_MODELS.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-          </label>
         </div>
 
         <M3eDivider />
