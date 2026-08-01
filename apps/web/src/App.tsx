@@ -8,10 +8,7 @@ import {
 import { M3eLoadingIndicator } from "@m3e/react/loading-indicator";
 import { M3eTheme } from "@m3e/react/theme";
 import { checkHealth, tagViaApi } from "./api";
-import {
-  BROWSER_MODEL_LIST,
-  BROWSER_MODELS,
-} from "./browserModels";
+import { BROWSER_MODELS } from "./browserModels";
 import {
   loadSettings,
   saveSettings,
@@ -809,9 +806,7 @@ export default function App() {
   return (
     <M3eTheme color="#3D5A80" variant="tonal-spot" scheme="light" motion="expressive">
       <div className="atmosphere" aria-hidden="true" />
-      <div
-        className={`app-shell ${showingResult ? "has-dock" : ""} ${previewUrl ? "has-image" : ""}`}
-      >
+      <div className={`app-shell ${showingResult ? "has-dock" : ""}`}>
         <div className="toolbar">
           <h1 className="toolbar-brand">vision</h1>
           <span className="muted toolbar-status" title={apiStatus}>
@@ -893,126 +888,6 @@ export default function App() {
         />
 
         <div className="stack">
-          {!showingResult && settings.engine === "browser" && (
-            <div className="model-picker">
-              <div className="model-picker-label">
-                {settings.tagRunMode === "merge" ? "結合モード" : "モデル"}
-              </div>
-              <div className="mode-row run-mode-row" role="radiogroup" aria-label="実行モード">
-                <button
-                  type="button"
-                  role="radio"
-                  className="mode-btn"
-                  aria-checked={settings.tagRunMode === "single"}
-                  onClick={() =>
-                    setSettings((s) => ({ ...s, tagRunMode: "single" }))
-                  }
-                >
-                  単体
-                </button>
-                <button
-                  type="button"
-                  role="radio"
-                  className="mode-btn"
-                  aria-checked={settings.tagRunMode === "merge"}
-                  onClick={() =>
-                    setSettings((s) => ({ ...s, tagRunMode: "merge" }))
-                  }
-                >
-                  結合
-                </button>
-              </div>
-              {settings.tagRunMode === "single" ? (
-                <>
-                  <div
-                    className="mode-row model-row"
-                    role="radiogroup"
-                    aria-label="ブラウザモデル"
-                  >
-                    {BROWSER_MODEL_LIST.map((m) => (
-                      <button
-                        key={m.id}
-                        type="button"
-                        role="radio"
-                        className="mode-btn"
-                        aria-checked={settings.browserModel === m.id}
-                        title={`${m.label} · 約${m.sizeMb}MB`}
-                        onClick={() => {
-                          if (settings.browserModel === m.id) return;
-                          setSettings((s) => ({ ...s, browserModel: m.id }));
-                          setSnack(
-                            `${m.shortLabel} に切替 · 初回は約${m.sizeMb}MB`,
-                          );
-                        }}
-                      >
-                        {m.shortLabel}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="muted model-picker-hint">
-                    {activeModel.description}
-                  </p>
-                </>
-              ) : (
-                <>
-                  <div className="ensemble-chips">
-                    {BROWSER_MODEL_LIST.map((m) => {
-                      const on = settings.ensembleModels.includes(m.id);
-                      return (
-                        <button
-                          key={m.id}
-                          type="button"
-                          className={`ensemble-chip ${on ? "is-on" : ""}`}
-                          title={m.description}
-                          onClick={() => {
-                            setSettings((s) => {
-                              const next = on
-                                ? s.ensembleModels.filter((id) => id !== m.id)
-                                : [...s.ensembleModels, m.id];
-                              return {
-                                ...s,
-                                ensembleModels:
-                                  next.length > 0 ? next : [s.browserModel],
-                              };
-                            });
-                          }}
-                        >
-                          {m.shortLabel}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <p className="muted model-picker-hint">
-                    同一タグは結合 · スコアは最大値 · 複数一致を優先
-                  </p>
-                </>
-              )}
-            </div>
-          )}
-
-          {!showingResult && (
-            <div className="mode-row" role="radiogroup" aria-label="出力モード">
-              {(
-                [
-                  ["booru", "Booru"],
-                  ["caption", "Caption"],
-                  ["hybrid", "Hybrid"],
-                ] as const
-              ).map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  role="radio"
-                  className="mode-btn"
-                  aria-checked={settings.mode === value}
-                  onClick={() => setSettings((s) => ({ ...s, mode: value }))}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          )}
-
           {previewUrl ? (
             <div className="image-hero">
               <button

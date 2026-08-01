@@ -9,6 +9,7 @@ import { M3eSlider } from "@m3e/react/slider";
 import { M3eSliderThumb } from "@m3e/react/slider";
 import { M3eSwitch } from "@m3e/react/switch";
 import {
+  BROWSER_MODEL_LIST,
   BROWSER_MODELS,
   type BrowserModelId,
 } from "./browserModels";
@@ -149,8 +150,99 @@ export function SettingsPanel({
         <div className="settings-block">
           <h3 className="settings-block-title">
             <M3eIcon name="tune" />
-            解析
+            解析モード
           </h3>
+          <label className="settings-field">
+            <span>出力</span>
+            <select
+              value={settings.mode}
+              onChange={(e) =>
+                patch({ mode: e.target.value as AppSettings["mode"] })
+              }
+            >
+              <option value="booru">Booru（タグ）</option>
+              <option value="caption">Caption</option>
+              <option value="hybrid">Hybrid</option>
+            </select>
+          </label>
+          <label className="settings-field">
+            <span>実行</span>
+            <select
+              value={settings.tagRunMode}
+              onChange={(e) =>
+                patch({
+                  tagRunMode: e.target.value as AppSettings["tagRunMode"],
+                })
+              }
+            >
+              <option value="single">単体モデル</option>
+              <option value="merge">結合（同一タグをマージ）</option>
+            </select>
+          </label>
+          {settings.tagRunMode === "single" ? (
+            <label className="settings-field">
+              <span>モデル</span>
+              <select
+                value={settings.browserModel}
+                onChange={(e) => {
+                  const id = e.target.value as BrowserModelId;
+                  patch({ browserModel: id });
+                  onSnack(
+                    `${BROWSER_MODELS[id].shortLabel} に切替 · 初回は再ダウンロードあり`,
+                  );
+                }}
+              >
+                {BROWSER_MODEL_LIST.map((m) => {
+                  const cached = caches.find((c) => c.id === m.id)?.present;
+                  return (
+                    <option key={m.id} value={m.id}>
+                      {m.label} · ~{m.sizeMb}MB
+                      {cached ? " · 保存済" : ""}
+                    </option>
+                  );
+                })}
+              </select>
+              <span className="settings-help">
+                {BROWSER_MODELS[settings.browserModel].description}
+              </span>
+            </label>
+          ) : (
+            <div className="ensemble-pick">
+              <p className="settings-help">
+                使うモデル（複数可）。同じタグは1つにまとめ、スコアは最大値です。
+              </p>
+              {BROWSER_MODEL_LIST.map((m) => {
+                const checked = settings.ensembleModels.includes(m.id);
+                const cached = caches.find((c) => c.id === m.id)?.present;
+                return (
+                  <label key={m.id} className="check-line">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => {
+                        onChange((s) => {
+                          const next = e.target.checked
+                            ? [...s.ensembleModels, m.id]
+                            : s.ensembleModels.filter((id) => id !== m.id);
+                          return {
+                            ...s,
+                            ensembleModels:
+                              next.length > 0 ? next : [s.browserModel],
+                          };
+                        });
+                      }}
+                    />
+                    {m.shortLabel}
+                    <span className="muted">
+                      {" "}
+                      · ~{m.sizeMb}MB
+                      {cached ? " · 保存済" : ""}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
           <label className="settings-field">
             <span>一般タグ閾値 ({thresholdPercent}%)</span>
             <M3eSlider
