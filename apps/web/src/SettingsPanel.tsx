@@ -9,25 +9,17 @@ import { M3eSlider } from "@m3e/react/slider";
 import { M3eSliderThumb } from "@m3e/react/slider";
 import { M3eSwitch } from "@m3e/react/switch";
 import {
-  BROWSER_MODEL_LIST,
   BROWSER_MODELS,
   type BrowserModelId,
 } from "./browserModels";
-import {
-  formatBytes,
-  getDeviceResourceInfo,
-  type DeviceResourceInfo,
-} from "./deviceResources";
+import { formatBytes } from "./deviceResources";
 import {
   clearAllCachedBrowserModels,
   deleteCachedBrowserModel,
   listCachedBrowserModels,
   type CachedModelInfo,
 } from "./wdBrowser";
-import {
-  isGitHubPagesHost,
-  type AppSettings,
-} from "./types";
+import { type AppSettings } from "./types";
 import { getLogEntries, getPreviousSessionReport } from "./diagnostics";
 import {
   ERO_BOOST_TAGS,
@@ -37,32 +29,17 @@ import {
   removeInsertPreset,
 } from "./forceUncensored";
 import { GROK_MODELS } from "./grokPrompt";
-import {
-  HELPER_DOWNLOAD_MACOS,
-  HELPER_DOWNLOAD_WINDOWS,
-  JOY_CAPTION_MODELS,
-} from "./joyModels";
-import { pingHelper, startHelperApi, stopHelperApi } from "./helperApi";
-import {
-  probeSupabaseSync,
-  SUPABASE_PROJECT_REF,
-  type SyncStatus,
-} from "./supabaseClient";
-import { isTagLibraryReady, probeTagLibraryError } from "./tagLibrary";
-import { TAG_LIBRARY_SCHEMA_SQL } from "./tagLibrarySchema";
+import { probeSupabaseSync, type SyncStatus } from "./supabaseClient";
+import { isTagLibraryReady } from "./tagLibrary";
 
 type Props = {
   open: boolean;
   settings: AppSettings;
   onChange: (next: AppSettings | ((s: AppSettings) => AppSettings)) => void;
   onClose: () => void;
-  /** Opens the drop-tag list, which App renders as its own modal. */
   onEditDropTags: () => void;
-  /** Opens the insert-tag list, also an App-level modal. */
   onEditInsertTags: () => void;
-  /** Opens the diagnostics log, also an App-level modal. */
   onOpenLog: () => void;
-  /** Opens history / favorites / dictionary library. */
   onOpenLibrary: () => void;
   onSnack: (message: string) => void;
 };
@@ -92,46 +69,21 @@ export function SettingsPanel({
   onOpenLibrary,
   onSnack,
 }: Props) {
-  const onPages = isGitHubPagesHost();
   const crash = getPreviousSessionReport();
   const logCount = getLogEntries().length;
   const thresholdPercent = Math.round(settings.threshold * 100);
-  const [resources, setResources] = useState<DeviceResourceInfo | null>(null);
   const [caches, setCaches] = useState<CachedModelInfo[]>([]);
   const [busy, setBusy] = useState(false);
-  const [helperBusy, setHelperBusy] = useState(false);
-  const [helperMsg, setHelperMsg] = useState<string>("未確認");
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
-  const [syncBusy, setSyncBusy] = useState(false);
-
-  const refreshHelper = useCallback(async () => {
-    const st = await pingHelper();
-    if (!st.ok) {
-      setHelperMsg(st.message || "ヘルパー未起動");
-      return st;
-    }
-    setHelperMsg(
-      st.apiReady
-        ? `API OK${st.joyRepo ? ` · ${st.joyRepo.split("/").pop()}` : ""}${st.backend ? ` · ${st.backend}` : ""}`
-        : st.message || "ヘルパー待機中",
-    );
-    return st;
-  }, []);
 
   const refresh = useCallback(async () => {
-    const [info, models] = await Promise.all([
-      getDeviceResourceInfo(),
-      listCachedBrowserModels(),
-    ]);
-    setResources(info);
-    setCaches(models);
-    void refreshHelper();
-  }, [refreshHelper]);
+    setCaches(await listCachedBrowserModels());
+  }, []);
 
   useEffect(() => {
     if (!open) return;
     void refresh();
-  }, [open, refresh, settings.browserModel, settings.ensembleModels.join(",")]);
+  }, [open, refresh]);
 
   useEffect(() => {
     if (!open) return;
@@ -183,16 +135,6 @@ export function SettingsPanel({
     }
   };
 
-  const usageRatio =
-    resources?.storageUsageBytes != null &&
-    resources.storageQuotaBytes != null &&
-    resources.storageQuotaBytes > 0
-      ? Math.min(
-          1,
-          resources.storageUsageBytes / resources.storageQuotaBytes,
-        )
-      : null;
-
   return (
     <M3eDialog
       className="settings-dialog"
@@ -204,701 +146,265 @@ export function SettingsPanel({
     >
       <span slot="header">設定</span>
       <div className="settings-sheet">
-      {onPages && (
-        <p className="settings-banner">
-          GitHub Pages ではタグ解析は端末内で行います。JoyCaption
-          は下の PC ヘルパー（Windows / Mac）を起動すると、このページからローカル
-          API に接続できます。
-        </p>
-      )}
-
-      <div className="settings-block">
-        <h3 className="settings-block-title">
-          <M3eIcon name="memory" />
-          端末リソース
-        </h3>
-        <div className="resource-grid">
-          <div className="resource-card">
-            <span className="resource-label">メモリ</span>
-            <strong className="resource-value">
-              {resources?.deviceMemoryGb != null
-                ? `約 ${resources.deviceMemoryGb} GB`
-                : "端末依存"}
-            </strong>
-            <span className="resource-hint">
-              {resources?.deviceMemoryGb != null
-                ? "navigator.deviceMemory"
-                : "Safari は最大数GBヒープまで確保可"}
-            </span>
-          </div>
-          <div className="resource-card">
-            <span className="resource-label">空きストレージ</span>
-            <strong className="resource-value">
-              {formatBytes(resources?.storageFreeBytes)}
-            </strong>
-            <span className="resource-hint">
-              使用 {formatBytes(resources?.storageUsageBytes)} /{" "}
-              {formatBytes(resources?.storageQuotaBytes)}
-            </span>
-          </div>
-          <div className="resource-card">
-            <span className="resource-label">推論バックエンド</span>
-            <strong className="resource-value">
-              {resources?.webGpu ? "WebGPU" : "WASM"}
-            </strong>
-            <span className="resource-hint">
-              OPFS {resources?.opfs ? "可" : "不可"}
-              {resources?.persisted ? " · 永続化済" : ""}
-              {!resources?.webGpu ? " · Pages は WASM" : ""}
-            </span>
-          </div>
-        </div>
-        {usageRatio != null && (
-          <div
-            className="storage-meter"
-            role="meter"
-            aria-valuenow={Math.round(usageRatio * 100)}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-label="ストレージ使用率"
-          >
-            <div
-              className="storage-meter-fill"
-              style={{ width: `${Math.round(usageRatio * 100)}%` }}
-            />
-          </div>
-        )}
-      </div>
-
-      <div className="settings-block">
-        <div className="settings-block-head">
+        <div className="settings-block">
           <h3 className="settings-block-title">
-            <M3eIcon name="download_done" />
-            ダウンロード済みモデル
+            <M3eIcon name="tune" />
+            解析
           </h3>
+          <label className="settings-field">
+            <span>一般タグ閾値 ({thresholdPercent}%)</span>
+            <M3eSlider
+              min={0.05}
+              max={0.95}
+              step={0.05}
+              labelled
+              onChange={(e) => {
+                const target = e.target as HTMLElement & {
+                  value?: number | null;
+                };
+                const thumb = (e.target as HTMLElement).querySelector?.(
+                  "m3e-slider-thumb",
+                ) as (HTMLElement & { value: number | null }) | null;
+                const v = Number(thumb?.value ?? target.value);
+                if (!Number.isNaN(v)) patch({ threshold: v });
+              }}
+            >
+              <M3eSliderThumb value={settings.threshold} />
+            </M3eSlider>
+          </label>
+          <label className="settings-switch">
+            <span>rating タグを含める</span>
+            <M3eSwitch
+              checked={settings.includeRating}
+              onChange={(e) => {
+                const el = e.currentTarget as HTMLElement & {
+                  checked?: boolean;
+                };
+                patch({ includeRating: !!el.checked });
+              }}
+            />
+          </label>
+          <label className="settings-switch">
+            <span>タグに日本語訳を表示</span>
+            <M3eSwitch
+              checked={settings.showTagJa}
+              onChange={(e) => {
+                const el = e.currentTarget as HTMLElement & {
+                  checked?: boolean;
+                };
+                patch({ showTagJa: !!el.checked });
+              }}
+            />
+          </label>
+        </div>
+
+        <M3eDivider />
+
+        <div className="settings-block">
+          <div className="settings-block-head">
+            <h3 className="settings-block-title">
+              <M3eIcon name="do_not_disturb_on" />
+              削除タグ
+            </h3>
+            <M3eButton type="button" variant="tonal" onClick={onEditDropTags}>
+              <M3eIcon slot="icon" name="edit" />
+              編集
+            </M3eButton>
+          </div>
+          <p className="settings-help">
+            {settings.dropTags.length > 0
+              ? `追加で ${settings.dropTags.length} 件を削除中`
+              : "検閲・モノクロなどは既定で削除。追加は編集から。"}
+          </p>
+        </div>
+
+        <M3eDivider />
+
+        <div className="settings-block">
+          <div className="settings-block-head">
+            <h3 className="settings-block-title">
+              <M3eIcon name="auto_awesome" />
+              挿入タグ
+            </h3>
+            <M3eButton type="button" variant="tonal" onClick={onEditInsertTags}>
+              <M3eIcon slot="icon" name="edit" />
+              編集
+            </M3eButton>
+          </div>
+          <label className="settings-switch">
+            <span>画質アップタグを自動挿入</span>
+            <M3eSwitch
+              checked={settings.insertQualityTags}
+              onChange={(e) => {
+                const el = e.currentTarget as HTMLElement & {
+                  checked?: boolean;
+                };
+                patch({ insertQualityTags: !!el.checked });
+              }}
+            />
+          </label>
+          <div className="insert-presets settings-presets">
+            <M3eButton
+              type="button"
+              variant={eroOn ? "filled" : "tonal"}
+              className="ero-boost-btn"
+              onClick={toggleEroBoost}
+            >
+              <M3eIcon slot="icon" name={eroOn ? "nightlife" : "dark_mode"} />
+              ero boost
+            </M3eButton>
+          </div>
+          <p className="settings-help">
+            {settings.insertQualityTags
+              ? `${QUALITY_INSERT_TAGS.slice(0, 3).join(", ")}… を挿入。`
+              : "画質タグはオフ。"}
+            {settings.insertTags.length > 0
+              ? ` 追加 ${settings.insertTags.length} 件。`
+              : ""}
+          </p>
+        </div>
+
+        <M3eDivider />
+
+        <div className="settings-block">
+          <h3 className="settings-block-title">
+            <M3eIcon name="key" />
+            Grok（任意）
+          </h3>
+          <label className="settings-field">
+            <span>xAI API キー</span>
+            <input
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="xai-…"
+              value={settings.xaiApiKey}
+              onChange={(e) => patch({ xaiApiKey: e.target.value })}
+            />
+          </label>
+          <label className="settings-field">
+            <span>モデル</span>
+            <select
+              value={settings.grokModel}
+              onChange={(e) => patch({ grokModel: e.target.value })}
+            >
+              {GROK_MODELS.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <M3eDivider />
+
+        <div className="settings-block">
+          <div className="settings-block-head">
+            <h3 className="settings-block-title">
+              <M3eIcon name="menu_book" />
+              タグライブラリ
+            </h3>
+            <M3eButton type="button" variant="tonal" onClick={onOpenLibrary}>
+              <M3eIcon slot="icon" name="history" />
+              開く
+            </M3eButton>
+          </div>
+          <p className="settings-help">
+            {syncStatus?.detail || "接続確認中…"}
+          </p>
           <M3eButton
             type="button"
             variant="text"
-            disabled={busy}
-            onClick={() => void refresh()}
+            onClick={() => {
+              void (async () => {
+                const st = await probeSupabaseSync();
+                setSyncStatus(st);
+                const ok = await isTagLibraryReady();
+                onSnack(ok ? "ライブラリ接続OK" : st.detail);
+              })();
+            }}
           >
-            更新
+            再確認
           </M3eButton>
         </div>
-        <M3eList className="cache-list">
-          {caches.map((m) => (
-            <M3eListItem key={m.id}>
-              <M3eIcon
-                slot="leading"
-                name={m.present ? "check_circle" : "cloud_download"}
-                filled={m.present}
-              />
-              {m.shortLabel}
-              <span slot="supporting-text">
-                {m.present
-                  ? `保存済 · ${formatBytes(m.bytes)}${
-                      m.savedAt ? ` · ${formatSavedAt(m.savedAt)}` : ""
-                    }`
-                  : `未ダウンロード · 約${m.expectedMb}MB`}
-                {m.tagsCached ? " · タグ辞書あり" : ""}
-              </span>
-              {m.present ? (
-                <M3eButton
-                  slot="trailing"
-                  type="button"
-                  variant="text"
-                  disabled={busy}
-                  onClick={() => void removeCache(m.id)}
-                >
-                  削除
-                </M3eButton>
-              ) : (
-                <span slot="trailing" className="cache-badge is-empty">
-                  未取得
+
+        <M3eDivider />
+
+        <div className="settings-block">
+          <div className="settings-block-head">
+            <h3 className="settings-block-title">
+              <M3eIcon name="download_done" />
+              モデルキャッシュ
+            </h3>
+            <M3eButton
+              type="button"
+              variant="text"
+              disabled={busy}
+              onClick={() => void refresh()}
+            >
+              更新
+            </M3eButton>
+          </div>
+          <M3eList className="cache-list">
+            {caches.map((m) => (
+              <M3eListItem key={m.id}>
+                <M3eIcon
+                  slot="leading"
+                  name={m.present ? "check_circle" : "cloud_download"}
+                  filled={m.present}
+                />
+                {m.shortLabel}
+                <span slot="supporting-text">
+                  {m.present
+                    ? `保存済 · ${formatBytes(m.bytes)}${
+                        m.savedAt ? ` · ${formatSavedAt(m.savedAt)}` : ""
+                      }`
+                    : `未取得 · 約${m.expectedMb}MB`}
                 </span>
-              )}
-            </M3eListItem>
-          ))}
-        </M3eList>
-        <div className="settings-actions">
+                {m.present ? (
+                  <M3eButton
+                    slot="trailing"
+                    type="button"
+                    variant="text"
+                    disabled={busy}
+                    onClick={() => void removeCache(m.id)}
+                  >
+                    削除
+                  </M3eButton>
+                ) : null}
+              </M3eListItem>
+            ))}
+          </M3eList>
           <M3eButton
             type="button"
             variant="outlined"
             disabled={busy || !caches.some((c) => c.present)}
             onClick={() => void clearAll()}
           >
-            <M3eIcon slot="icon" name="delete" />
             キャッシュ全削除
           </M3eButton>
         </div>
-      </div>
 
-      <M3eDivider />
+        <M3eDivider />
 
-      <div className="settings-block">
-        <h3 className="settings-block-title">
-          <M3eIcon name="tune" />
-          推論
-        </h3>
-
-        <label className="settings-field">
-          <span>推論エンジン</span>
-          <select
-            value={settings.engine}
-            onChange={(e) =>
-              patch({ engine: e.target.value as AppSettings["engine"] })
-            }
-          >
-            <option value="browser">ブラウザ (WD/PixAI · Pages対応)</option>
-            <option value="local-api">ローカル API (JoyCaption + WD14)</option>
-          </select>
-        </label>
-
-        {settings.engine === "browser" && (
-          <>
-            <label className="settings-field">
-              <span>実行モード</span>
-              <select
-                value={settings.tagRunMode}
-                onChange={(e) =>
-                  patch({
-                    tagRunMode: e.target.value as AppSettings["tagRunMode"],
-                  })
-                }
-              >
-                <option value="single">単体モデル</option>
-                <option value="merge">結合（同一タグをマージ）</option>
-              </select>
-            </label>
-
-            {settings.tagRunMode === "single" ? (
-              <label className="settings-field">
-                <span>ブラウザモデル</span>
-                <select
-                  value={settings.browserModel}
-                  onChange={(e) => {
-                    const id = e.target.value as BrowserModelId;
-                    patch({ browserModel: id });
-                    onSnack(
-                      `${BROWSER_MODELS[id].shortLabel} に切替 · 初回は再ダウンロードあり`,
-                    );
-                  }}
-                >
-                  {BROWSER_MODEL_LIST.map((m) => {
-                    const cached = caches.find((c) => c.id === m.id)?.present;
-                    return (
-                      <option key={m.id} value={m.id}>
-                        {m.label} · ~{m.sizeMb}MB
-                        {cached ? " · 保存済" : ""}
-                      </option>
-                    );
-                  })}
-                </select>
-                <span className="settings-help">
-                  {BROWSER_MODELS[settings.browserModel].description}
-                </span>
-              </label>
-            ) : (
-              <div className="ensemble-pick">
-                <p className="settings-help">
-                  同じタグは1つにまとめ、スコアは最大値。複数一致を優先します。
-                </p>
-                {BROWSER_MODEL_LIST.map((m) => {
-                  const checked = settings.ensembleModels.includes(m.id);
-                  const cached = caches.find((c) => c.id === m.id)?.present;
-                  return (
-                    <label key={m.id} className="check-line">
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={(e) => {
-                          onChange((s) => {
-                            const next = e.target.checked
-                              ? [...s.ensembleModels, m.id]
-                              : s.ensembleModels.filter((id) => id !== m.id);
-                            return {
-                              ...s,
-                              ensembleModels:
-                                next.length > 0 ? next : [s.browserModel],
-                            };
-                          });
-                        }}
-                      />
-                      {m.shortLabel}
-                      <span className="muted">
-                        {" "}
-                        · ~{m.sizeMb}MB
-                        {cached ? " · 保存済" : ""}
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
-            )}
-          </>
-        )}
-
-        {settings.engine === "local-api" && (
-          <>
-            <p className="settings-help">
-              Windows / Mac ヘルパー、または <code>./scripts/dev.sh</code>{" "}
-              で API を起動してください。未起動の場合は自動でブラウザ推論に戻ります。
-            </p>
-            <label className="settings-field">
-              <span>API Base URL</span>
-              <input
-                type="text"
-                value={settings.apiBase}
-                onChange={(e) => patch({ apiBase: e.target.value })}
-              />
-            </label>
-          </>
-        )}
-
-        <div className="settings-block nested-block">
+        <div className="settings-block">
           <div className="settings-block-head">
             <h3 className="settings-block-title">
-              <M3eIcon name="desktop_windows" />
-              JoyCaption（PC ヘルパー）
+              <M3eIcon name="bug_report" />
+              診断ログ
             </h3>
-            <M3eButton
-              type="button"
-              variant="text"
-              disabled={helperBusy}
-              onClick={() => void refreshHelper()}
-            >
-              状態更新
+            <M3eButton type="button" variant="tonal" onClick={onOpenLog}>
+              開く
             </M3eButton>
           </div>
           <p className="settings-help">
-            PC 向け常駐ヘルパーです。ZIP を解凍してから起動ファイルを開いてください。
-            Windows は <code>VisionHelper.bat</code>、Mac は{" "}
-            <code>VisionHelper.command</code>（初回は右クリック → 開く）。
-            Docker Desktop 推奨（なければ Python 3.12+）。
-          </p>
-          <p className="settings-help">状態: {helperMsg}</p>
-          <label className="settings-field">
-            <span>JoyCaption モデル</span>
-            <select
-              value={settings.joyCaptionModel}
-              onChange={(e) => patch({ joyCaptionModel: e.target.value })}
-            >
-              {JOY_CAPTION_MODELS.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-            <span className="settings-help">
-              {
-                JOY_CAPTION_MODELS.find((m) => m.id === settings.joyCaptionModel)
-                  ?.hint
-              }
-            </span>
-          </label>
-          <div className="helper-actions">
-            <M3eButton
-              type="button"
-              variant="tonal"
-              onClick={() => {
-                const base = import.meta.env.BASE_URL || "/";
-                const path = `${base.replace(/\/?$/, "/")}${HELPER_DOWNLOAD_WINDOWS}`;
-                const a = document.createElement("a");
-                a.href = path;
-                a.download = "vision-helper-windows.zip";
-                a.rel = "noopener";
-                a.click();
-                onSnack("Windows ヘルパー ZIP のダウンロードを開始しました");
-              }}
-            >
-              <M3eIcon slot="icon" name="download" />
-              Windows
-            </M3eButton>
-            <M3eButton
-              type="button"
-              variant="tonal"
-              onClick={() => {
-                const base = import.meta.env.BASE_URL || "/";
-                const path = `${base.replace(/\/?$/, "/")}${HELPER_DOWNLOAD_MACOS}`;
-                const a = document.createElement("a");
-                a.href = path;
-                a.download = "vision-helper-macos.zip";
-                a.rel = "noopener";
-                a.click();
-                onSnack("Mac ヘルパー ZIP のダウンロードを開始しました");
-              }}
-            >
-              <M3eIcon slot="icon" name="download" />
-              Mac (.command)
-            </M3eButton>
-            <M3eButton
-              type="button"
-              variant="filled"
-              disabled={helperBusy}
-              onClick={() => {
-                void (async () => {
-                  setHelperBusy(true);
-                  try {
-                    const st = await startHelperApi({
-                      joyModelId: settings.joyCaptionModel,
-                      enableJoy: true,
-                    });
-                    setHelperMsg(st.message || (st.ok ? "起動しました" : "失敗"));
-                    if (st.apiReady || st.ok) {
-                      patch({
-                        engine: "local-api",
-                        apiBase: "http://127.0.0.1:8000",
-                        enableJoy: true,
-                      });
-                      onSnack(
-                        st.apiReady
-                          ? "JoyCaption API に接続しました"
-                          : st.message || "起動を依頼しました",
-                      );
-                    } else {
-                      onSnack(st.message || "ヘルパーを先に起動してください");
-                    }
-                    await refreshHelper();
-                  } finally {
-                    setHelperBusy(false);
-                  }
-                })();
-              }}
-            >
-              <M3eIcon slot="icon" name="play_arrow" />
-              {helperBusy ? "起動中…" : "JoyCaption を起動"}
-            </M3eButton>
-            <M3eButton
-              type="button"
-              variant="outlined"
-              disabled={helperBusy}
-              onClick={() => {
-                void (async () => {
-                  setHelperBusy(true);
-                  try {
-                    const st = await stopHelperApi();
-                    setHelperMsg(st.message || "停止");
-                    onSnack("ローカル API の停止を依頼しました");
-                    await refreshHelper();
-                  } finally {
-                    setHelperBusy(false);
-                  }
-                })();
-              }}
-            >
-              <M3eIcon slot="icon" name="stop" />
-              API を停止
-            </M3eButton>
-          </div>
-        </div>
-
-        <label className="settings-field">
-          <span>一般タグ閾値 ({thresholdPercent}%)</span>
-          <M3eSlider
-            min={0.05}
-            max={0.95}
-            step={0.05}
-            labelled
-            onChange={(e) => {
-              const target = e.target as HTMLElement & {
-                value?: number | null;
-              };
-              const thumb = (e.target as HTMLElement).querySelector?.(
-                "m3e-slider-thumb",
-              ) as (HTMLElement & { value: number | null }) | null;
-              const v = Number(thumb?.value ?? target.value);
-              if (!Number.isNaN(v)) patch({ threshold: v });
-            }}
-          >
-            <M3eSliderThumb value={settings.threshold} />
-          </M3eSlider>
-        </label>
-
-        <label className="settings-switch">
-          <span>rating タグを含める</span>
-          <M3eSwitch
-            checked={settings.includeRating}
-            onChange={(e) => {
-              const el = e.currentTarget as HTMLElement & { checked?: boolean };
-              patch({ includeRating: !!el.checked });
-            }}
-          />
-        </label>
-
-        {settings.engine === "local-api" && (
-          <label className="settings-switch">
-            <span>JoyCaption を使う</span>
-            <M3eSwitch
-              checked={settings.enableJoy}
-              onChange={(e) => {
-                const el = e.currentTarget as HTMLElement & {
-                  checked?: boolean;
-                };
-                patch({ enableJoy: !!el.checked });
-              }}
-            />
-          </label>
-        )}
-      </div>
-
-      <M3eDivider />
-
-      <div className="settings-block">
-        <h3 className="settings-block-title">
-          <M3eIcon name="auto_awesome" />
-          Grok プロンプト
-        </h3>
-        <p className="settings-help">
-          解析タグから Stable Diffusion 用プロンプトを Grok に書かせます。
-          xAI の従量課金 API キーが必要です（月額固定ではありません）。キーはこの端末だけに保存し、xAI 以外へは送りません。
-        </p>
-        <label className="settings-field">
-          <span>xAI API キー</span>
-          <input
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="xai-…"
-            value={settings.xaiApiKey}
-            onChange={(e) => patch({ xaiApiKey: e.target.value })}
-          />
-          <span className="settings-help">
-            <a
-              href="https://console.x.ai"
-              target="_blank"
-              rel="noreferrer"
-            >
-              console.x.ai
-            </a>
-            で取得。未設定でもタグ解析自体は使えます。
-          </span>
-        </label>
-        <label className="settings-field">
-          <span>モデル</span>
-          <select
-            value={settings.grokModel}
-            onChange={(e) => patch({ grokModel: e.target.value })}
-          >
-            {GROK_MODELS.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-          <span className="settings-help">
-            普段は Mini / Fast が安くて十分です。
-          </span>
-        </label>
-        {settings.xaiApiKey.trim() ? (
-          <M3eButton
-            type="button"
-            variant="text"
-            onClick={() => {
-              patch({ xaiApiKey: "" });
-              onSnack("API キーを削除しました");
-            }}
-          >
-            <M3eIcon slot="icon" name="key_off" />
-            キーを削除
-          </M3eButton>
-        ) : null}
-      </div>
-
-      <M3eDivider />
-
-      <div className="settings-block">
-        <div className="settings-block-head">
-          <h3 className="settings-block-title">
-            <M3eIcon name="do_not_disturb_on" />
-            削除タグ
-          </h3>
-          <M3eButton type="button" variant="tonal" onClick={onEditDropTags}>
-            <M3eIcon slot="icon" name="edit" />
-            編集
-          </M3eButton>
-        </div>
-        <p className="settings-help">
-          検閲・モノクロ・漫画・構図ノイズ（v / multiple views）は既定で削除します。
-          {settings.dropTags.length > 0
-            ? `追加で ${settings.dropTags.length} 件を削除中: ${settings.dropTags
-                .slice(0, 6)
-                .join(", ")}${settings.dropTags.length > 6 ? " …" : ""}`
-            : "追加のタグは未登録です。"}
-        </p>
-      </div>
-
-      <M3eDivider />
-
-      <div className="settings-block">
-        <div className="settings-block-head">
-          <h3 className="settings-block-title">
-            <M3eIcon name="auto_awesome" />
-            挿入タグ
-          </h3>
-          <M3eButton type="button" variant="tonal" onClick={onEditInsertTags}>
-            <M3eIcon slot="icon" name="edit" />
-            編集
-          </M3eButton>
-        </div>
-        <label className="settings-switch">
-          <span>画質アップタグを自動挿入</span>
-          <M3eSwitch
-            checked={settings.insertQualityTags}
-            onChange={(e) => {
-              const el = e.currentTarget as HTMLElement & {
-                checked?: boolean;
-              };
-              patch({ insertQualityTags: !!el.checked });
-            }}
-          />
-        </label>
-        <div className="insert-presets settings-presets">
-          <M3eButton
-            type="button"
-            variant={eroOn ? "filled" : "tonal"}
-            className="ero-boost-btn"
-            onClick={toggleEroBoost}
-          >
-            <M3eIcon slot="icon" name={eroOn ? "nightlife" : "dark_mode"} />
-            ero boost
-          </M3eButton>
-          <p className="settings-help">
-            夜の暗闇とシネマティックなエロいムード（ドラマチックではない）。
-            {eroOn ? " 適用中 · 再押下で解除。" : ""}
+            {crash
+              ? `前回は${crash.analyzing ? "解析中に" : ""}強制終了しました。`
+              : "端末内のみに記録します。"}
+            {logCount > 0 ? ` ${logCount} 件。` : ""}
           </p>
         </div>
-        <p className="settings-help">
-          {settings.insertQualityTags
-            ? `イラスト向けに ${QUALITY_INSERT_TAGS.join(", ")} を先頭付近へ入れます。`
-            : "画質アップタグはオフです。"}
-          {settings.insertTags.length > 0
-            ? ` 追加で ${settings.insertTags.length} 件を挿入中: ${settings.insertTags
-                .slice(0, 6)
-                .join(", ")}${settings.insertTags.length > 6 ? " …" : ""}`
-            : " 任意のタグは未登録です。"}
-        </p>
-      </div>
-
-      <M3eDivider />
-
-      <div className="settings-block">
-        <div className="settings-block-head">
-          <h3 className="settings-block-title">
-            <M3eIcon name="translate" />
-            表示
-          </h3>
-        </div>
-        <label className="settings-switch">
-          <span>タグに日本語訳を表示</span>
-          <M3eSwitch
-            checked={settings.showTagJa}
-            onChange={(e) => {
-              const el = e.currentTarget as HTMLElement & {
-                checked?: boolean;
-              };
-              patch({ showTagJa: !!el.checked });
-            }}
-          />
-        </label>
-        <p className="settings-help">
-          生成タグの下に日本語訳を併記します。プロンプト本文は英語のままです。
-        </p>
-      </div>
-
-      <M3eDivider />
-
-      <div className="settings-block">
-        <div className="settings-block-head">
-          <h3 className="settings-block-title">
-            <M3eIcon name="menu_book" />
-            タグライブラリ
-          </h3>
-          <M3eButton type="button" variant="tonal" onClick={onOpenLibrary}>
-            <M3eIcon slot="icon" name="history" />
-            開く
-          </M3eButton>
-        </div>
-        <p className="settings-help">
-          履歴・お気に入り・辞書・前回セッションは Supabase（
-          <code>vision_tag_sets</code> / <code>vision_tag_dictionary</code>
-          ）に自動保存されます。キーの設定は不要です。
-        </p>
-        <p className="settings-help">
-          状態:{" "}
-          {syncStatus
-            ? syncStatus.detail
-            : "確認中…"}
-          {" · "}
-          <code>{SUPABASE_PROJECT_REF}</code>
-        </p>
-        <div className="settings-presets">
-          <M3eButton
-            type="button"
-            variant="tonal"
-            disabled={syncBusy}
-            onClick={() => {
-              setSyncBusy(true);
-              void (async () => {
-                setSyncStatus(await probeSupabaseSync());
-                const ok = await isTagLibraryReady();
-                const detail = ok ? null : await probeTagLibraryError();
-                onSnack(
-                  ok
-                    ? "Supabase テーブルに接続できました"
-                    : detail || "未接続です",
-                );
-                setSyncBusy(false);
-              })();
-            }}
-          >
-            <M3eIcon slot="icon" name="refresh" />
-            再確認
-          </M3eButton>
-          <M3eButton
-            type="button"
-            variant="tonal"
-            disabled={syncBusy}
-            onClick={() => {
-              void navigator.clipboard.writeText(TAG_LIBRARY_SCHEMA_SQL).then(
-                () => onSnack("スキーマ SQL をコピーしました"),
-                () => onSnack("コピーに失敗しました"),
-              );
-            }}
-          >
-            <M3eIcon slot="icon" name="content_copy" />
-            SQLをコピー
-          </M3eButton>
-          <a
-            className="btn-text"
-            href={`https://supabase.com/dashboard/project/${SUPABASE_PROJECT_REF}/sql/new`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            SQL Editor
-          </a>
-        </div>
-      </div>
-
-      <M3eDivider />
-
-      <div className="settings-block">
-        <div className="settings-block-head">
-          <h3 className="settings-block-title">
-            <M3eIcon name="bug_report" />
-            診断ログ
-          </h3>
-          <M3eButton type="button" variant="tonal" onClick={onOpenLog}>
-            <M3eIcon slot="icon" name="receipt_long" />
-            開く
-          </M3eButton>
-        </div>
-        <p className="settings-help">
-          {crash
-            ? `前回は${crash.analyzing ? "解析中に" : ""}強制終了しました（最後の記録: ${crash.lastMsg || "不明"}）。`
-            : "解析の各段階を端末内だけに記録します。落ちた時の直前の処理が分かります。"}
-          {logCount > 0 ? ` 現在 ${logCount} 件。` : ""}
-        </p>
-      </div>
       </div>
 
       <div slot="actions" className="dialog-actions">

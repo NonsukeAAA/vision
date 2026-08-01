@@ -135,13 +135,19 @@ select {
 .app-shell {
   position: relative;
   z-index: 1;
-  width: min(520px, 100%);
+  width: min(560px, 100%);
   margin: 0 auto;
-  padding: var(--space-md) var(--space-md) var(--space-xl);
+  padding: var(--space-sm) var(--space-md) var(--space-xl);
 }
 
 .app-shell.has-image {
-  width: min(720px, 100%);
+  width: min(960px, 100%);
+  padding-inline: 0;
+}
+
+.app-shell.has-image .toolbar,
+.app-shell.has-image .stack > :not(.image-hero) {
+  padding-inline: var(--space-md);
 }
 
 .app-shell.has-dock {
@@ -150,23 +156,35 @@ select {
 
 .toolbar {
   display: flex;
-  justify-content: space-between;
   align-items: center;
   gap: var(--space-sm);
   min-height: var(--tap);
-  margin-bottom: var(--space-md);
+  margin-bottom: var(--space-sm);
   animation: rise 500ms var(--ease) both;
 }
 
-.toolbar .muted {
+.toolbar-brand {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 560;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  color: var(--ink);
+  flex: 0 0 auto;
+}
+
+.toolbar-status {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 0.6875rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--ink-3);
-  max-width: 72%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-align: right;
 }
 
 .toolbar-gear {
@@ -180,43 +198,11 @@ select {
   min-height: var(--tap);
   padding: 0 var(--space-sm);
   cursor: pointer;
+  flex: 0 0 auto;
 }
 
 .toolbar-gear:hover {
   color: var(--ink);
-}
-
-.brand {
-  margin: 0 0 var(--space-lg);
-  animation: brand-in 700ms var(--spring) both;
-}
-
-.brand h1 {
-  margin: 0;
-  font-family: var(--font-display);
-  font-size: clamp(3rem, 11vw, 4rem);
-  font-weight: 560;
-  letter-spacing: -0.055em;
-  line-height: 0.92;
-  color: var(--ink);
-}
-
-.brand p {
-  margin: var(--space-sm) 0 0;
-  max-width: 26ch;
-  font-size: 0.875rem;
-  font-weight: 400;
-  line-height: 1.5;
-  color: var(--ink-2);
-}
-
-.brand-compact {
-  margin-bottom: var(--space-md);
-}
-
-.brand-compact h1 {
-  font-size: clamp(1.5rem, 5vw, 1.75rem);
-  letter-spacing: -0.04em;
 }
 
 .stack {
@@ -416,19 +402,20 @@ select {
   width: 100%;
   margin: 0;
   padding: 0;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
+  border: 0;
+  border-radius: 0;
   overflow: hidden;
-  background: rgba(20, 24, 28, 0.06);
+  background: rgba(20, 24, 28, 0.08);
   cursor: pointer;
 }
 
 .image-hero-frame img {
   display: block;
   width: 100%;
-  max-height: min(72vh, 720px);
+  height: auto;
+  max-height: min(82vh, 920px);
   object-fit: contain;
-  background: rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .image-hero-bar {
@@ -437,6 +424,7 @@ select {
   justify-content: space-between;
   gap: var(--space-sm);
   flex-wrap: wrap;
+  padding-inline: var(--space-md);
 }
 
 .image-hero-meta {
@@ -1508,7 +1496,7 @@ select {
   z-index: 30;
   display: flex;
   gap: var(--space-sm);
-  width: min(720px, 100%);
+  width: min(960px, 100%);
   transform: translateX(-50%);
   padding: var(--space-sm) var(--space-md) calc(var(--space-sm) + env(safe-area-inset-bottom, 0px));
   background: linear-gradient(
@@ -1520,32 +1508,35 @@ select {
 }
 
 .crop-dialog {
-  --md-dialog-container-max-width: min(920px, 100vw);
+  --md-dialog-container-max-width: min(960px, 100vw);
 }
 
 .crop-body {
   display: grid;
   gap: var(--space-md);
-  min-width: min(84vw, 720px);
+  width: min(88vw, 840px);
+  max-width: 100%;
 }
 
 .crop-stage {
   position: relative;
   width: 100%;
+  max-height: min(64vh, 620px);
+  overflow: auto;
   touch-action: none;
   user-select: none;
   border-radius: var(--radius-sm);
-  overflow: hidden;
-  background: rgba(20, 24, 28, 0.08);
+  background: rgba(20, 24, 28, 0.1);
   border: 1px solid var(--line);
 }
 
 .crop-image {
   display: block;
   width: 100%;
-  max-height: min(62vh, 560px);
-  object-fit: contain;
+  height: auto;
+  max-width: 100%;
   pointer-events: none;
+  -webkit-user-drag: none;
 }
 
 .crop-box {
@@ -1554,6 +1545,7 @@ select {
   border: 2px solid #fff;
   box-shadow: 0 0 0 9999px rgba(10, 12, 16, 0.45);
   cursor: move;
+  z-index: 2;
 }
 
 .crop-handle {
@@ -1677,7 +1669,7 @@ m3e-slider {
 }
 
 @media (max-width: 600px) {
-  .app-shell {
+  .app-shell:not(.has-image) {
     padding-inline: var(--space-md);
   }
 
@@ -1689,24 +1681,23 @@ m3e-slider {
     display: none;
   }
 
-  .brand h1 {
-    font-size: clamp(2.75rem, 14vw, 3.5rem);
-  }
-
   .image-hero-actions {
     width: 100%;
     justify-content: flex-start;
   }
 
   .crop-body {
-    min-width: 0;
+    width: 100%;
+  }
+
+  .toolbar-brand {
+    font-size: 1.125rem;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .atmosphere::before,
   .action-dock,
-  .brand,
   .panel,
   .dropzone,
   .result {

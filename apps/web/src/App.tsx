@@ -813,7 +813,8 @@ export default function App() {
         className={`app-shell ${showingResult ? "has-dock" : ""} ${previewUrl ? "has-image" : ""}`}
       >
         <div className="toolbar">
-          <span className="muted" title={apiStatus}>
+          <h1 className="toolbar-brand">vision</h1>
+          <span className="muted toolbar-status" title={apiStatus}>
             {apiStatus || "準備中…"}
           </span>
           <button
@@ -890,11 +891,6 @@ export default function App() {
           onCropped={applyCroppedImage}
           onError={(message) => setSnack(message)}
         />
-
-        <header className={`brand ${showingResult ? "brand-compact" : ""}`}>
-          <h1>vision</h1>
-          {!showingResult && <p>画像からタグへ。すべて端末の中で。</p>}
-        </header>
 
         <div className="stack">
           {!showingResult && settings.engine === "browser" && (
