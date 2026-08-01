@@ -43,6 +43,17 @@ import {
   JOY_CAPTION_MODELS,
 } from "./joyModels";
 import { pingHelper, startHelperApi, stopHelperApi } from "./helperApi";
+import {
+  probeSupabaseSync,
+  SUPABASE_PROJECT_REF,
+  SUPABASE_URL,
+  type SyncStatus,
+} from "./supabaseClient";
+import {
+  syncLibraryFromRemote,
+  syncLibraryToRemote,
+} from "./tagLibrary";
+
 type Props = {
   open: boolean;
   settings: AppSettings;
@@ -93,6 +104,8 @@ export function SettingsPanel({
   const [busy, setBusy] = useState(false);
   const [helperBusy, setHelperBusy] = useState(false);
   const [helperMsg, setHelperMsg] = useState<string>("未確認");
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  const [syncBusy, setSyncBusy] = useState(false);
 
   const refreshHelper = useCallback(async () => {
     const st = await pingHelper();
@@ -122,6 +135,17 @@ export function SettingsPanel({
     if (!open) return;
     void refresh();
   }, [open, refresh, settings.browserModel, settings.ensembleModels.join(",")]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void probeSupabaseSync(settings.supabaseAnonKey).then((st) => {
+      if (!cancelled) setSyncStatus(st);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, settings.supabaseAnonKey]);
 
   const patch = (partial: Partial<AppSettings>) => {
     onChange((s) => ({ ...s, ...partial }));
@@ -798,9 +822,80 @@ export function SettingsPanel({
           </M3eButton>
         </div>
         <p className="settings-help">
-          直近100件の履歴・お気に入り・生成タグ辞書を端末内 DB
-          に保存します。選択すると結果画面へ読み込んで編集できます。
+          履歴・お気に入り・辞書は端末内 IndexedDB にキャッシュし、Supabase
+          （{SUPABASE_PROJECT_REF}）へ同期して永続化します。
         </p>
+        <label className="settings-field">
+          <span>Supabase Anon Key</span>
+          <input
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="eyJhbGciOi…"
+            value={settings.supabaseAnonKey}
+            onChange={(e) => patch({ supabaseAnonKey: e.target.value.trim() })}
+          />
+        </label>
+        <p className="settings-help">
+          Dashboard → Project Settings → API → anon public。URL:{" "}
+          <code>{SUPABASE_URL}</code>
+          。Anonymous Sign-Ins を有効にしてください。ビルド時の{" "}
+          <code>VITE_SUPABASE_ANON_KEY</code> があれば省略できます。
+        </p>
+        <p className="settings-help">
+          同期:{" "}
+          {syncStatus
+            ? syncStatus.detail
+            : "確認中…"}
+        </p>
+        <div className="settings-presets">
+          <M3eButton
+            type="button"
+            variant="tonal"
+            disabled={syncBusy}
+            onClick={() => {
+              setSyncBusy(true);
+              void (async () => {
+                const ok = await syncLibraryFromRemote();
+                setSyncStatus(
+                  await probeSupabaseSync(settings.supabaseAnonKey),
+                );
+                onSnack(
+                  ok
+                    ? "Supabase から取り込みました"
+                    : "取り込みに失敗（キー / Anonymous を確認）",
+                );
+                setSyncBusy(false);
+              })();
+            }}
+          >
+            <M3eIcon slot="icon" name="cloud_download" />
+            取得
+          </M3eButton>
+          <M3eButton
+            type="button"
+            variant="tonal"
+            disabled={syncBusy}
+            onClick={() => {
+              setSyncBusy(true);
+              void (async () => {
+                const ok = await syncLibraryToRemote();
+                setSyncStatus(
+                  await probeSupabaseSync(settings.supabaseAnonKey),
+                );
+                onSnack(
+                  ok
+                    ? "Supabase へアップロードしました"
+                    : "アップロードに失敗（キー / Anonymous を確認）",
+                );
+                setSyncBusy(false);
+              })();
+            }}
+          >
+            <M3eIcon slot="icon" name="cloud_upload" />
+            送信
+          </M3eButton>
+        </div>
       </div>
 
       <M3eDivider />

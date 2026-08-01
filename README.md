@@ -11,6 +11,24 @@
   - [JoyCaption Beta One](https://huggingface.co/fancyfeast/llama-joycaption-beta-one-hf-llava) — 情景・表情に強い詳細キャプション（ローカル API）
   - [WD EVA02-Large Tagger v3](https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3) — Danbooru タグ（ブラウザ ONNX / ローカル API）
 
+## Supabase（タグライブラリ永続化）
+
+履歴・お気に入り・辞書・前回セッションは端末の IndexedDB にキャッシュし、[Supabase](https://supabase.com) プロジェクト `nmdlasnxevejggwmnjwm` へ同期します。
+
+1. Dashboard で **Authentication → Providers → Anonymous Sign-Ins** を ON
+2. マイグレーション適用（アクセストークンが必要）:
+
+```bash
+export SUPABASE_ACCESS_TOKEN=sbp_…   # https://supabase.com/dashboard/account/tokens
+export SUPABASE_DB_PASSWORD=…        # 任意（db push で使う場合）
+./scripts/supabase-link.sh
+```
+
+   または SQL Editor で [`supabase/migrations/20260801000000_vision_tag_library.sql`](./supabase/migrations/20260801000000_vision_tag_library.sql) を実行
+
+3. アプリ設定に **anon public** キーを貼る（またはビルド時 `VITE_SUPABASE_ANON_KEY`）
+4. 設定 → タグライブラリ → **送信 / 取得** で手動同期も可能
+
 ## GitHub Pages デプロイ
 
 静的フロント（ブラウザ内 WD14）を Pages に公開できます。

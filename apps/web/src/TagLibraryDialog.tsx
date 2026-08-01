@@ -279,9 +279,8 @@ export function TagLibraryDialog({
 
       <div className="tag-lib-body">
         <p className="settings-help">
-          履歴・お気に入り・辞書は端末内の IndexedDB に保存されます（Pages
-          にはユーザー用サーバが無いため）。バックアップ JSON
-          で別端末へ移せます。
+          端末内 IndexedDB にキャッシュし、設定した Supabase
+          へ同期します。バックアップ JSON でも移せます。
         </p>
 
         <div className="tag-lib-tabs" role="tablist">

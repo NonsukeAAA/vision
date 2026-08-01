@@ -49,8 +49,10 @@ import {
   removeFavorite,
   saveGeneratedSet,
   saveLastSession,
+  syncLibraryFromRemote,
   type TagSetRecord,
 } from "./tagLibrary";
+import { setSupabaseAnonKeyProvider } from "./tagLibrarySync";
 import {
   describeError,
   getPreviousSessionReport,
@@ -125,6 +127,10 @@ export default function App() {
   useEffect(() => {
     saveSettings(settings);
   }, [settings]);
+
+  useEffect(() => {
+    setSupabaseAnonKeyProvider(() => settings.supabaseAnonKey);
+  }, [settings.supabaseAnonKey]);
 
   // Lazy-load EN→JA dictionary when the user wants glosses (default on).
   useEffect(() => {
@@ -351,27 +357,37 @@ export default function App() {
   };
 
   // Bring the previous image + last tags back on load (survives tab kills).
+  // Prefer Supabase when configured, then fall back to IndexedDB.
   useEffect(() => {
     let cancelled = false;
+    setSupabaseAnonKeyProvider(() => loadSettings().supabaseAnonKey);
     void (async () => {
-      const [restoredImage, session] = await Promise.all([
-        loadLastImage(),
-        loadLastSession(),
-      ]);
+      const restoredImage = await loadLastImage();
       if (cancelled) return;
       if (restoredImage && !fileRef.current) {
         setFile(restoredImage);
         setPreviewUrl(URL.createObjectURL(restoredImage));
       }
+      const pulled = await syncLibraryFromRemote();
+      if (cancelled) return;
+      if (pulled) refreshCustomJa();
+      const session = await loadLastSession();
+      if (cancelled) return;
       if (session?.tags?.length) {
         applyTagSet(session);
         setSnack(
-          restoredImage
-            ? "前回の画像とタグを復元しました"
-            : "前回のタグを復元しました",
+          pulled
+            ? restoredImage
+              ? "Supabase と前回の画像を復元しました"
+              : "Supabase からタグを復元しました"
+            : restoredImage
+              ? "前回の画像とタグを復元しました"
+              : "前回のタグを復元しました",
         );
       } else if (restoredImage) {
         setSnack("前回の画像を復元しました");
+      } else if (pulled) {
+        setSnack("Supabase と同期しました");
       }
     })();
     return () => {

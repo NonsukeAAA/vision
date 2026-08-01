@@ -68,6 +68,11 @@ export type AppSettings = {
   joyCaptionModel: string;
   /** Show Japanese gloss under each result tag chip. */
   showTagJa: boolean;
+  /**
+   * Supabase anon (public) key for tag-library sync.
+   * Stored only in this browser; prefer VITE_SUPABASE_ANON_KEY at build time.
+   */
+  supabaseAnonKey: string;
 };
 
 /**
@@ -125,6 +130,7 @@ export const defaultSettings = (): AppSettings => ({
   grokModel: "grok-3-mini",
   joyCaptionModel: DEFAULT_JOY_CAPTION_MODEL,
   showTagJa: true,
+  supabaseAnonKey: "",
 });
 
 /** Trim, lowercase, de-duplicate and cap a user-entered tag list. */
@@ -248,6 +254,10 @@ function normalizeSettings(parsed: Record<string, unknown> | null): AppSettings 
     ? merged.joyCaptionModel
     : DEFAULT_JOY_CAPTION_MODEL;
   merged.showTagJa = merged.showTagJa !== false;
+  merged.supabaseAnonKey =
+    typeof merged.supabaseAnonKey === "string"
+      ? merged.supabaseAnonKey.trim()
+      : "";
   // Pages may still use local-api when the Windows helper is running on :8000.
   return merged;
 }

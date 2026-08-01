@@ -1,11 +1,20 @@
 /**
- * On-device tag library: history (≤100), favorites, editable dictionary,
- * and the last working session. IndexedDB is the durable store for GitHub Pages
- * (no user-data server). Export/import covers backup and move between devices.
+ * Tag library: IndexedDB offline cache + optional Supabase remote durability.
+ * Export/import still works as a manual backup path.
  */
 
 import { describeError, logInfo, logWarn } from "./diagnostics";
 import { normalizeTag } from "./forceUncensored";
+import {
+  pullRemoteLibrary,
+  pushFullLibrary,
+  remoteDeleteDict,
+  remoteDeleteSet,
+  remoteUpsertDict,
+  remoteUpsertDictTags,
+  remoteUpsertSet,
+  safeSync,
+} from "./tagLibrarySync";
 import type { OutputMode, TagScore } from "./types";
 
 const DB_NAME = "vision-tag-library";
@@ -230,6 +239,11 @@ export async function saveGeneratedSet(record: TagSetRecord): Promise<void> {
       await trimHistory(db);
     });
     logInfo("tag set saved", { id: record.id, tags: record.tags.length });
+    void safeSync("saveGeneratedSet", async () => {
+      await remoteUpsertSet(record, "history");
+      await remoteUpsertSet(record, "session");
+      await remoteUpsertDictTags(record.tags);
+    });
   } catch (err) {
     logWarn("tag set save failed", describeError(err));
   }
@@ -243,6 +257,10 @@ export async function saveLastSession(record: TagSetRecord): Promise<void> {
       tx.objectStore(STORE_META).put(record, META_SESSION);
       await txDone(tx);
       await upsertDictionaryTags(db, record.tags);
+    });
+    void safeSync("saveLastSession", async () => {
+      await remoteUpsertSet(record, "session");
+      await remoteUpsertDictTags(record.tags);
     });
   } catch (err) {
     logWarn("last session save failed", describeError(err));
@@ -312,12 +330,13 @@ export async function isFavorite(id: string): Promise<boolean> {
 
 export async function addFavorite(record: TagSetRecord): Promise<void> {
   try {
+    const next = { ...record, updatedAt: Date.now() };
     await withDb(async (db) => {
-      const next = { ...record, updatedAt: Date.now() };
       const tx = db.transaction(STORE_FAVORITES, "readwrite");
       tx.objectStore(STORE_FAVORITES).put(next);
       await txDone(tx);
     });
+    void safeSync("addFavorite", () => remoteUpsertSet(next, "favorite"));
   } catch (err) {
     logWarn("favorite add failed", describeError(err));
     throw err;
@@ -331,6 +350,7 @@ export async function removeFavorite(id: string): Promise<void> {
       tx.objectStore(STORE_FAVORITES).delete(id);
       await txDone(tx);
     });
+    void safeSync("removeFavorite", () => remoteDeleteSet(id, "favorite"));
   } catch (err) {
     logWarn("favorite remove failed", describeError(err));
     throw err;
@@ -344,6 +364,7 @@ export async function deleteHistory(id: string): Promise<void> {
       tx.objectStore(STORE_HISTORY).delete(id);
       await txDone(tx);
     });
+    void safeSync("deleteHistory", () => remoteDeleteSet(id, "history"));
   } catch (err) {
     logWarn("history delete failed", describeError(err));
   }
@@ -387,11 +408,11 @@ export async function upsertDictEntry(
 ): Promise<DictEntry> {
   const key = normalizeTag(patch.tag);
   if (!key) throw new Error("empty tag");
-  return withDb(async (db) => {
+  const next = await withDb(async (db) => {
     const tx = db.transaction(STORE_DICT, "readwrite");
     const store = tx.objectStore(STORE_DICT);
     const prev = (await reqToPromise(store.get(key))) as DictEntry | undefined;
-    const next: DictEntry = {
+    const row: DictEntry = {
       tag: key,
       category: patch.category ?? prev?.category ?? "general",
       lastScore: patch.lastScore ?? prev?.lastScore ?? 0,
@@ -400,10 +421,12 @@ export async function upsertDictEntry(
       note: patch.note ?? prev?.note ?? "",
       updatedAt: Date.now(),
     };
-    store.put(next);
+    store.put(row);
     await txDone(tx);
-    return next;
+    return row;
   });
+  void safeSync("upsertDictEntry", () => remoteUpsertDict(next));
+  return next;
 }
 
 export async function deleteDictEntry(tag: string): Promise<void> {
@@ -414,6 +437,7 @@ export async function deleteDictEntry(tag: string): Promise<void> {
     tx.objectStore(STORE_DICT).delete(key);
     await txDone(tx);
   });
+  void safeSync("deleteDictEntry", () => remoteDeleteDict(key));
 }
 
 /** Map of normalized tag → customJa for fast chip rendering. */
@@ -476,4 +500,78 @@ export async function importLibrary(
     await txDone(tx);
     await trimHistory(db);
   });
+  void safeSync("importLibrary", async () => {
+    await pushFullLibrary({
+      history: data.history ?? [],
+      favorites: data.favorites ?? [],
+      dictionary: data.dictionary ?? [],
+      lastSession: data.lastSession ?? null,
+    });
+  });
+}
+
+/** Pull Supabase → IndexedDB (merge by updatedAt). */
+export async function syncLibraryFromRemote(): Promise<boolean> {
+  try {
+    const remote = await pullRemoteLibrary();
+    if (!remote) return false;
+    await withDb(async (db) => {
+      const tx = db.transaction(
+        [STORE_HISTORY, STORE_FAVORITES, STORE_DICT, STORE_META],
+        "readwrite",
+      );
+      const hist = tx.objectStore(STORE_HISTORY);
+      const fav = tx.objectStore(STORE_FAVORITES);
+      const dict = tx.objectStore(STORE_DICT);
+      const meta = tx.objectStore(STORE_META);
+
+      for (const row of remote.history) {
+        const prev = (await reqToPromise(hist.get(row.id))) as
+          | TagSetRecord
+          | undefined;
+        if (!prev || (prev.updatedAt || 0) <= row.updatedAt) hist.put(row);
+      }
+      for (const row of remote.favorites) {
+        const prev = (await reqToPromise(fav.get(row.id))) as
+          | TagSetRecord
+          | undefined;
+        if (!prev || (prev.updatedAt || 0) <= row.updatedAt) fav.put(row);
+      }
+      for (const row of remote.dictionary) {
+        const prev = (await reqToPromise(dict.get(row.tag))) as
+          | DictEntry
+          | undefined;
+        if (!prev || (prev.updatedAt || 0) <= row.updatedAt) dict.put(row);
+      }
+      if (remote.lastSession) {
+        const prev = (await reqToPromise(meta.get(META_SESSION))) as
+          | TagSetRecord
+          | undefined;
+        if (
+          !prev ||
+          (prev.updatedAt || 0) <= remote.lastSession.updatedAt
+        ) {
+          meta.put(remote.lastSession, META_SESSION);
+        }
+      }
+      await txDone(tx);
+      await trimHistory(db);
+    });
+    return true;
+  } catch (err) {
+    logWarn("sync from remote failed", describeError(err));
+    return false;
+  }
+}
+
+/** Push full local library to Supabase (initial upload / repair). */
+export async function syncLibraryToRemote(): Promise<boolean> {
+  try {
+    const data = await exportLibrary();
+    await pushFullLibrary(data);
+    return true;
+  } catch (err) {
+    logWarn("sync to remote failed", describeError(err));
+    return false;
+  }
 }
