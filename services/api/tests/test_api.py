@@ -74,3 +74,8 @@ def test_tag_booru(client: TestClient) -> None:
     data = res.json()
     assert data["mode"] == "booru"
     assert "," in data["prompt"] or data["tags"]
+    assert data["tags"][0]["tag"] == "uncensored"
+    assert "uncensored" in data["prompt"]
+    assert not any(
+        t["tag"] in {"censored", "mosaic censoring", "bar censor"} for t in data["tags"]
+    )
