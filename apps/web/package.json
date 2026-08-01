@@ -5,7 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "predev": "node scripts/fetch-tag-ja.mjs",
+    "build": "tsc --noEmit && node scripts/fetch-tag-ja.mjs && vite build",
+    "build:pages": "tsc --noEmit && node scripts/fetch-tag-ja.mjs && node scripts/pack-helper-windows.mjs && vite build && node scripts/copy-pixai-q4.mjs",
+    "fetch:tag-ja": "node scripts/fetch-tag-ja.mjs",
+    "pack:helper": "node scripts/pack-helper-windows.mjs",
     "preview": "vite preview",
     "lint": "tsc --noEmit --pretty false"
   },
@@ -13,6 +17,7 @@
     "@m3e/icons": "^1.0.10",
     "@m3e/react": "^2.6.2",
     "@m3e/web": "^2.6.2",
+    "@supabase/supabase-js": "^2.111.0",
     "onnxruntime-web": "1.27.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

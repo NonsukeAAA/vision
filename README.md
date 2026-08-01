@@ -11,6 +11,21 @@
   - [JoyCaption Beta One](https://huggingface.co/fancyfeast/llama-joycaption-beta-one-hf-llava) — 情景・表情に強い詳細キャプション（ローカル API）
   - [WD EVA02-Large Tagger v3](https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3) — Danbooru タグ（ブラウザ ONNX / ローカル API）
 
+## Supabase（タグライブラリ — DB 管理）
+
+履歴・お気に入り・辞書・前回セッションは **すべて Supabase Postgres** のテーブルで管理します（端末キャッシュなし）。
+
+| テーブル | 内容 |
+| --- | --- |
+| `vision_tag_sets` | history / favorite / session |
+| `vision_tag_dictionary` | 生成タグ辞書（訳・メモ） |
+
+1. Dashboard → **SQL Editor** でスキーマを実行（アプリ設定の「SQLをコピー」、または `apps/web/src/tagLibrarySchema.sql`）
+2. **Project Settings → API → service_role** をアプリ設定に貼る（この端末だけ）
+3. Table Editor でデータを直接確認・編集できます
+
+`service_role` は強力なので Git / Pages ビルドには入れないでください。
+
 ## GitHub Pages デプロイ
 
 静的フロント（ブラウザ内 WD14）を Pages に公開できます。
@@ -21,7 +36,24 @@
 4. 公開 URL: `https://<user>.github.io/<repo>/`  
    （`VITE_BASE_PATH` はワークフローがリポジトリ名から自動設定）
 
-Pages 上の既定エンジンは **ブラウザ (WD14)** です。JoyCaption 併用はローカル API を起動し、設定で `local-api` に切り替えてください（ブラウザから `http://127.0.0.1:8000` へ接続。CORS 許可済み）。
+Pages 上の既定エンジンは **ブラウザ (WD14 / PixAI)** です。JoyCaption を使う場合:
+
+1. 設定 → **Windows** または **Mac (.command)** で ZIP をダウンロード
+2. 解凍して起動ファイルを開く
+   - Windows: `VisionHelper.bat`
+   - Mac: `VisionHelper.command`（初回は右クリック → 開く）
+3. 設定で JoyCaption モデルを選び **JoyCaption を起動**
+4. 自動で `local-api`（`http://127.0.0.1:8000`）に切り替わります
+
+Docker Desktop 推奨。なければ Python 3.12+。初回はモデル取得で時間がかかります。
+
+開発時は従来どおり:
+
+```bash
+./scripts/dev.sh
+```
+
+CORS は `*.github.io` を許可済みです。
 
 ## ローカル開発
 

@@ -10,6 +10,9 @@ dist-ssr/
 .env
 .DS_Store
 apps/web/package-lock.json.bak
+apps/web/public/i18n/danbooru-ja.json
+supabase/.temp
+supabase/.branches
 *.onnx
 models/
 .cache/
