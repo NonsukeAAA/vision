@@ -54,6 +54,8 @@ type Props = {
   onEditInsertTags: () => void;
   /** Opens the diagnostics log, also an App-level modal. */
   onOpenLog: () => void;
+  /** Opens history / favorites / dictionary library. */
+  onOpenLibrary: () => void;
   onSnack: (message: string) => void;
 };
 
@@ -79,6 +81,7 @@ export function SettingsPanel({
   onEditDropTags,
   onEditInsertTags,
   onOpenLog,
+  onOpenLibrary,
   onSnack,
 }: Props) {
   const onPages = isGitHubPagesHost();
@@ -778,6 +781,25 @@ export function SettingsPanel({
         </label>
         <p className="settings-help">
           生成タグの下に日本語訳を併記します。プロンプト本文は英語のままです。
+        </p>
+      </div>
+
+      <M3eDivider />
+
+      <div className="settings-block">
+        <div className="settings-block-head">
+          <h3 className="settings-block-title">
+            <M3eIcon name="menu_book" />
+            タグライブラリ
+          </h3>
+          <M3eButton type="button" variant="tonal" onClick={onOpenLibrary}>
+            <M3eIcon slot="icon" name="history" />
+            開く
+          </M3eButton>
+        </div>
+        <p className="settings-help">
+          直近100件の履歴・お気に入り・生成タグ辞書を端末内 DB
+          に保存します。選択すると結果画面へ読み込んで編集できます。
         </p>
       </div>
 

@@ -717,6 +717,14 @@ select {
   min-height: 28px;
 }
 
+.tags-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px 8px;
+}
+
 .tags-title {
   margin: 0;
   font-size: 0.6875rem;
@@ -732,6 +740,11 @@ select {
   gap: 6px;
   max-height: 220px;
   overflow: auto;
+}
+
+.chip-wrap-fullscreen {
+  max-height: min(70vh, 720px);
+  padding: 2px;
 }
 
 .tag-chip {
@@ -792,11 +805,183 @@ select {
 }
 
 .settings-dialog,
-.drop-tags-dialog {
+.drop-tags-dialog,
+.tag-library-dialog {
   --m3e-dialog-min-width: min(92vw, 340px);
   --m3e-dialog-max-width: min(92vw, 620px);
   --m3e-dialog-shape: var(--radius-lg);
   --m3e-dialog-header-font-family: var(--font-display);
+}
+
+.tags-fullscreen-dialog {
+  --m3e-dialog-min-width: min(96vw, 360px);
+  --m3e-dialog-max-width: min(96vw, 920px);
+  --m3e-dialog-shape: var(--radius-lg);
+  --m3e-dialog-header-font-family: var(--font-display);
+}
+
+.tags-fs-body {
+  display: grid;
+  gap: var(--space-md);
+  min-width: 0;
+}
+
+.tags-fs-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.tags-fs-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tag-lib-body {
+  display: grid;
+  gap: var(--space-md);
+  min-width: 0;
+}
+
+.tag-lib-tabs {
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.tag-lib-tabs .mode-btn {
+  flex: 1;
+}
+
+.tag-lib-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  max-height: min(50vh, 420px);
+  overflow: auto;
+}
+
+.tag-lib-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: start;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.tag-lib-main {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  display: grid;
+  gap: 2px;
+  cursor: pointer;
+  color: inherit;
+  min-width: 0;
+}
+
+.tag-lib-main strong {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.tag-lib-preview {
+  font-size: 0.75rem;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-lib-item-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.tag-lib-search {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+}
+
+.tag-lib-edit {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.tag-lib-edit label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--ink-2);
+}
+
+.tag-lib-edit input {
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+}
+
+.tag-lib-edit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tag-lib-backup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.tag-lib-import {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.65);
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.tag-lib-import input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
 }
 
 .log-dialog {

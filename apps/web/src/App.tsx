@@ -31,12 +31,26 @@ import {
 } from "./wdBrowser";
 import { forceUncensoredTags, forcedPrefixTags, setCustomDropTags, setCustomInsertTags, setInsertQualityEnabled } from "./forceUncensored";
 import { generateSdPromptWithGrok } from "./grokPrompt";
-import { ensureTagJaLoaded, isTagJaReady, translateTag } from "./tagJa";
+import { ensureTagJaLoaded, isTagJaReady } from "./tagJa";
 import { SettingsPanel } from "./SettingsPanel";
 import { DropTagsDialog } from "./DropTagsDialog";
 import { InsertTagsDialog } from "./InsertTagsDialog";
 import { LogDialog } from "./LogDialog";
+import { TagChipList } from "./TagChipList";
+import { TagLibraryDialog } from "./TagLibraryDialog";
+import { TagsFullscreenDialog } from "./TagsFullscreenDialog";
 import { clearLastImage, loadLastImage, saveLastImage } from "./lastImage";
+import {
+  addFavorite,
+  buildTagSet,
+  isFavorite,
+  loadCustomJaMap,
+  loadLastSession,
+  removeFavorite,
+  saveGeneratedSet,
+  saveLastSession,
+  type TagSetRecord,
+} from "./tagLibrary";
 import {
   describeError,
   getPreviousSessionReport,
@@ -62,6 +76,11 @@ export default function App() {
   const [showDropTags, setShowDropTags] = useState(false);
   const [showInsertTags, setShowInsertTags] = useState(false);
   const [showLog, setShowLog] = useState(false);
+  const [showTagsFs, setShowTagsFs] = useState(false);
+  const [showLibrary, setShowLibrary] = useState(false);
+  const [undoStack, setUndoStack] = useState<TagScore[]>([]);
+  const [customJa, setCustomJa] = useState<Record<string, string>>({});
+  const [favorited, setFavorited] = useState(false);
   // A hard tab kill leaves no error to show, so the last session's verdict gets
   // its own banner instead of a snack that another message can overwrite.
   const [crashNotice, setCrashNotice] = useState(() => getPreviousSessionReport());
@@ -80,6 +99,17 @@ export default function App() {
   const copyResetRef = useRef<number | null>(null);
   const fileRef = useRef<File | null>(null);
   fileRef.current = file;
+  const sessionIdRef = useRef<string | null>(null);
+  const sessionCreatedAtRef = useRef<number | null>(null);
+  const persistTimerRef = useRef<number | null>(null);
+  const editableTagsRef = useRef(editableTags);
+  const promptRefValue = useRef(prompt);
+  const resultRefValue = useRef(result);
+  const tagVotesRef = useRef(tagVotes);
+  editableTagsRef.current = editableTags;
+  promptRefValue.current = prompt;
+  resultRefValue.current = result;
+  tagVotesRef.current = tagVotes;
   const showingResult = screen === "result" && !!result;
   const activeModel = BROWSER_MODELS[settings.browserModel];
   const runModels =
@@ -202,22 +232,152 @@ export default function App() {
   useEffect(() => {
     return () => {
       if (copyResetRef.current) window.clearTimeout(copyResetRef.current);
+      if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current);
     };
   }, []);
 
-  // Bring the previous image back on load, including after iOS drops the tab,
-  // so a reset never means picking the same file again.
+  const refreshCustomJa = () => {
+    void loadCustomJaMap().then(setCustomJa);
+  };
+
+  useEffect(() => {
+    refreshCustomJa();
+  }, []);
+
+  const rebuildPrompt = (
+    tags: TagScore[],
+    caption: string | null,
+    mode: OutputMode,
+  ) => {
+    const forced = forceUncensoredTags(tags);
+    const tagPart = forced.map((t) => t.tag).join(", ");
+    if (mode === "caption") {
+      const base = caption ?? "";
+      if (!base.trim()) return "uncensored";
+      const cleaned = base
+        .replace(
+          /\b(mosaic|censor(?:ed|ing| bar)?|bar censor|pixelated|monochrome|grayscale|greyscale|comic|manga|4koma|lineart|sketch|speech bubble|screentone|halftone|multiple views)\b/gi,
+          "",
+        )
+        .replace(/\s{2,}/g, " ")
+        .trim();
+      if (/\buncensored\b/i.test(cleaned)) return cleaned;
+      return cleaned ? `${cleaned} uncensored.` : "uncensored";
+    }
+    if (mode === "hybrid" && caption) return `${caption}\n\n${tagPart}`;
+    return tagPart;
+  };
+
+  const snapshotCurrentSet = (
+    tags: TagScore[],
+    nextPrompt: string,
+    opts?: {
+      asNewHistory?: boolean;
+      caption?: string | null;
+      mode?: OutputMode;
+      votes?: Record<string, number>;
+      sourceNote?: string;
+    },
+  ): TagSetRecord => {
+    const id =
+      opts?.asNewHistory || !sessionIdRef.current
+        ? undefined
+        : sessionIdRef.current;
+    const createdAt =
+      opts?.asNewHistory || !sessionCreatedAtRef.current
+        ? undefined
+        : sessionCreatedAtRef.current;
+    const record = buildTagSet({
+      id,
+      createdAt,
+      tags,
+      prompt: nextPrompt,
+      caption:
+        opts?.caption !== undefined
+          ? opts.caption
+          : (resultRefValue.current?.caption ?? null),
+      mode:
+        opts?.mode ?? resultRefValue.current?.mode ?? settings.mode,
+      votes: opts?.votes ?? tagVotesRef.current,
+      sourceNote:
+        opts?.sourceNote ?? resultRefValue.current?.source?.note ?? "",
+      imageName: fileRef.current?.name ?? "",
+    });
+    sessionIdRef.current = record.id;
+    sessionCreatedAtRef.current = record.createdAt;
+    return record;
+  };
+
+  const scheduleSessionSave = (tags: TagScore[], nextPrompt: string) => {
+    if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = window.setTimeout(() => {
+      const record = snapshotCurrentSet(tags, nextPrompt);
+      void saveLastSession(record);
+    }, 400);
+  };
+
+  const applyTagSet = (record: TagSetRecord) => {
+    sessionIdRef.current = record.id;
+    sessionCreatedAtRef.current = record.createdAt;
+    const tags = forceUncensoredTags(record.tags);
+    const nextPrompt =
+      record.prompt?.trim() ||
+      rebuildPrompt(tags, record.caption, record.mode || settings.mode);
+    setEditableTags(tags);
+    setPrompt(nextPrompt);
+    setTagVotes(record.votes ?? {});
+    setUndoStack([]);
+    setCopied(false);
+    setResult({
+      mode: record.mode || settings.mode,
+      tags,
+      prompt: nextPrompt,
+      caption: record.caption,
+      source: {
+        wd: "library",
+        note: record.sourceNote || "タグライブラリから読み込み",
+      },
+      device: "local",
+      mock: false,
+    });
+    setScreen("result");
+    void isFavorite(record.id).then(setFavorited);
+    void saveLastSession({
+      ...record,
+      tags,
+      prompt: nextPrompt,
+      updatedAt: Date.now(),
+    });
+  };
+
+  // Bring the previous image + last tags back on load (survives tab kills).
   useEffect(() => {
     let cancelled = false;
-    void loadLastImage().then((restored) => {
-      if (cancelled || !restored || fileRef.current) return;
-      setFile(restored);
-      setPreviewUrl(URL.createObjectURL(restored));
-      setSnack("前回の画像を復元しました");
-    });
+    void (async () => {
+      const [restoredImage, session] = await Promise.all([
+        loadLastImage(),
+        loadLastSession(),
+      ]);
+      if (cancelled) return;
+      if (restoredImage && !fileRef.current) {
+        setFile(restoredImage);
+        setPreviewUrl(URL.createObjectURL(restoredImage));
+      }
+      if (session?.tags?.length) {
+        applyTagSet(session);
+        setSnack(
+          restoredImage
+            ? "前回の画像とタグを復元しました"
+            : "前回のタグを復元しました",
+        );
+      } else if (restoredImage) {
+        setSnack("前回の画像を復元しました");
+      }
+    })();
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only restore
   }, []);
 
   const pickFile = (next: File | null) => {
@@ -239,6 +399,10 @@ export default function App() {
     setError(null);
     setCopied(false);
     setTagVotes({});
+    setUndoStack([]);
+    setFavorited(false);
+    sessionIdRef.current = null;
+    sessionCreatedAtRef.current = null;
     if (next) {
       void saveLastImage(next).catch((err) =>
         logWarn("saveLastImage failed", describeError(err)),
@@ -259,26 +423,6 @@ export default function App() {
     if (f && f.type.startsWith("image/")) pickFile(f);
   };
 
-  const rebuildPrompt = (tags: TagScore[], caption: string | null, mode: OutputMode) => {
-    const forced = forceUncensoredTags(tags);
-    const tagPart = forced.map((t) => t.tag).join(", ");
-    if (mode === "caption") {
-      const base = caption ?? "";
-      if (!base.trim()) return "uncensored";
-      const cleaned = base
-        .replace(
-          /\b(mosaic|censor(?:ed|ing| bar)?|bar censor|pixelated|monochrome|grayscale|greyscale|comic|manga|4koma|lineart|sketch|speech bubble|screentone|halftone|multiple views)\b/gi,
-          "",
-        )
-        .replace(/\s{2,}/g, " ")
-        .trim();
-      if (/\buncensored\b/i.test(cleaned)) return cleaned;
-      return cleaned ? `${cleaned} uncensored.` : "uncensored";
-    }
-    if (mode === "hybrid" && caption) return `${caption}\n\n${tagPart}`;
-    return tagPart;
-  };
-
   // The drop / insert lists live in a module-level registry because the ONNX
   // layer filters too — App just keeps them in sync with settings.
   useEffect(() => {
@@ -287,9 +431,15 @@ export default function App() {
     setInsertQualityEnabled(settings.insertQualityTags);
     if (editableTags.length === 0) return;
     const next = forceUncensoredTags(editableTags);
+    const nextPrompt = rebuildPrompt(
+      next,
+      result?.caption ?? null,
+      settings.mode,
+    );
     setEditableTags(next);
-    setPrompt(rebuildPrompt(next, result?.caption ?? null, settings.mode));
+    setPrompt(nextPrompt);
     setCopied(false);
+    scheduleSessionSave(next, nextPrompt);
   }, [settings.dropTags, settings.insertTags, settings.insertQualityTags]);
 
   const runTag = async () => {
@@ -321,8 +471,10 @@ export default function App() {
     }
     try {
       let next: TagResult;
+      let nextVotes: Record<string, number> = {};
       if (settings.engine === "local-api") {
         next = await tagViaApi(file, settings);
+        nextVotes = {};
         setTagVotes({});
       } else {
         if (settings.mode === "caption") {
@@ -341,6 +493,7 @@ export default function App() {
             },
             onWdProgress,
           );
+          nextVotes = ensemble.votes;
           setTagVotes(ensemble.votes);
           next = {
             mode: settings.mode === "hybrid" ? "booru" : settings.mode,
@@ -358,6 +511,7 @@ export default function App() {
             mock: false,
           };
         } else {
+          nextVotes = {};
           setTagVotes({});
           const browser = await tagInBrowser(
             file,
@@ -391,6 +545,20 @@ export default function App() {
       setPrompt(nextPrompt);
       setResult({ ...next, tags: forcedTags, prompt: nextPrompt });
       setScreen("result");
+      setUndoStack([]);
+      sessionIdRef.current = null;
+      sessionCreatedAtRef.current = null;
+      const record = snapshotCurrentSet(forcedTags, nextPrompt, {
+        asNewHistory: true,
+        caption: next.caption,
+        mode: next.mode,
+        votes: nextVotes,
+        sourceNote: next.source?.note ?? "",
+      });
+      void saveGeneratedSet(record).then(() => {
+        void isFavorite(record.id).then(setFavorited);
+        refreshCustomJa();
+      });
       logInfo("analyze done", {
         ms: performance.now() - startedAt,
         tags: forcedTags.length,
@@ -416,16 +584,76 @@ export default function App() {
   };
 
   const removeTag = (tag: string) => {
+    const removed = editableTags.find((t) => t.tag === tag);
+    if (!removed) return;
+    if (forcedPrefixTags().includes(
+      tag.trim().toLowerCase().replaceAll("_", " "),
+    )) {
+      return;
+    }
     const tags = forceUncensoredTags(editableTags.filter((t) => t.tag !== tag));
+    const nextPrompt = rebuildPrompt(
+      tags,
+      result?.caption ?? null,
+      settings.mode,
+    );
+    setUndoStack((prev) => [...prev, removed]);
     setEditableTags(tags);
-    setPrompt(rebuildPrompt(tags, result?.caption ?? null, settings.mode));
+    setPrompt(nextPrompt);
     setCopied(false);
+    setSnack(`「${tag}」を削除 · 戻すで復元できます`);
+    scheduleSessionSave(tags, nextPrompt);
+  };
+
+  const undoRemoveTag = () => {
+    setUndoStack((prev) => {
+      if (prev.length === 0) return prev;
+      const restored = prev[prev.length - 1];
+      const nextStack = prev.slice(0, -1);
+      const merged = forceUncensoredTags([
+        ...editableTagsRef.current.filter((t) => t.tag !== restored.tag),
+        restored,
+      ]);
+      const nextPrompt = rebuildPrompt(
+        merged,
+        resultRefValue.current?.caption ?? null,
+        settings.mode,
+      );
+      setEditableTags(merged);
+      setPrompt(nextPrompt);
+      setCopied(false);
+      scheduleSessionSave(merged, nextPrompt);
+      setSnack(`「${restored.tag}」を戻しました`);
+      return nextStack;
+    });
+  };
+
+  const toggleCurrentFavorite = async () => {
+    if (!sessionIdRef.current || editableTags.length === 0) {
+      setSnack("先にタグを生成してください");
+      return;
+    }
+    const record = snapshotCurrentSet(editableTags, prompt);
+    try {
+      if (favorited) {
+        await removeFavorite(record.id);
+        setFavorited(false);
+        setSnack("お気に入りを解除しました");
+      } else {
+        await addFavorite(record);
+        setFavorited(true);
+        setSnack("お気に入りに追加しました");
+      }
+    } catch {
+      setSnack("お気に入りの更新に失敗しました");
+    }
   };
 
   const syncPromptFromTags = () => {
     const next = rebuildPrompt(editableTags, result?.caption ?? null, settings.mode);
     setPrompt(next);
     setCopied(false);
+    scheduleSessionSave(editableTags, next);
     setSnack("タグからプロンプトを再生成しました");
   };
 
@@ -452,6 +680,7 @@ export default function App() {
       });
       setPrompt(out.prompt);
       setCopied(false);
+      scheduleSessionSave(editableTagsRef.current, out.prompt);
       setSnack(`Grok がプロンプトを作成しました（${out.model}）`);
     } catch (err) {
       const message =
@@ -526,6 +755,10 @@ export default function App() {
           onEditDropTags={() => setShowDropTags(true)}
           onEditInsertTags={() => setShowInsertTags(true)}
           onOpenLog={() => setShowLog(true)}
+          onOpenLibrary={() => {
+            setShowSettings(false);
+            setShowLibrary(true);
+          }}
           onSnack={setSnack}
         />
 
@@ -548,6 +781,29 @@ export default function App() {
           open={showLog}
           onClose={() => setShowLog(false)}
           onNotify={setSnack}
+        />
+
+        <TagLibraryDialog
+          open={showLibrary}
+          onClose={() => setShowLibrary(false)}
+          onLoadSet={applyTagSet}
+          onNotify={setSnack}
+          onDictChanged={refreshCustomJa}
+        />
+
+        <TagsFullscreenDialog
+          open={showTagsFs}
+          tags={editableTags}
+          votes={tagVotes}
+          prompt={prompt}
+          showJa={settings.showTagJa && tagJaReady}
+          customJa={customJa}
+          canUndo={undoStack.length > 0}
+          onRemove={removeTag}
+          onUndo={undoRemoveTag}
+          onCopy={() => void copyPrompt()}
+          onClose={() => setShowTagsFs(false)}
+          copied={copied}
         />
 
         <header className={`brand ${showingResult ? "brand-compact" : ""}`}>
@@ -886,8 +1142,10 @@ export default function App() {
                     className="prompt-box"
                     value={prompt}
                     onChange={(e) => {
-                      setPrompt(e.target.value);
+                      const value = e.target.value;
+                      setPrompt(value);
                       setCopied(false);
+                      scheduleSessionSave(editableTagsRef.current, value);
                     }}
                     aria-label="生成プロンプト"
                     rows={6}
@@ -908,52 +1166,54 @@ export default function App() {
               {editableTags.length > 0 && (
                 <div className="tags-block">
                   <div className="tags-head">
-                    <h3 className="tags-title">タグ · タップで除外</h3>
-                    <button
-                      type="button"
-                      className="btn-text"
-                      onClick={syncPromptFromTags}
-                    >
-                      タグから再生成
-                    </button>
+                    <h3 className="tags-title">タグ · 2秒長押しで削除</h3>
+                    <div className="tags-head-actions">
+                      <button
+                        type="button"
+                        className="btn-text"
+                        onClick={() => void toggleCurrentFavorite()}
+                        title={favorited ? "お気に入り解除" : "お気に入り"}
+                      >
+                        {favorited ? "★" : "☆"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-text"
+                        onClick={() => setShowLibrary(true)}
+                      >
+                        履歴
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-text"
+                        disabled={undoStack.length === 0}
+                        onClick={undoRemoveTag}
+                      >
+                        戻す
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-text"
+                        onClick={() => setShowTagsFs(true)}
+                      >
+                        全画面
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-text"
+                        onClick={syncPromptFromTags}
+                      >
+                        再生成
+                      </button>
+                    </div>
                   </div>
-                  <div className="chip-wrap">
-                    {editableTags.map((t) => {
-                      const locked = forcedPrefixTags().includes(
-                        t.tag.trim().toLowerCase().replaceAll("_", " "),
-                      );
-                      const ja =
-                        settings.showTagJa && tagJaReady
-                          ? translateTag(t.tag)
-                          : null;
-                      return (
-                        <button
-                          key={t.tag}
-                          type="button"
-                          className={`tag-chip ${locked ? "tag-locked" : ""}`}
-                          onClick={() => {
-                            if (!locked) removeTag(t.tag);
-                          }}
-                          title={
-                            locked
-                              ? "設定の挿入タグから変更できます"
-                              : tagVotes[t.tag]
-                                ? `${tagVotes[t.tag]}モデルが一致 · クリックで削除`
-                                : "クリックで削除"
-                          }
-                        >
-                          <span className="tag-chip-main">
-                            <span className="tag-en">{t.tag}</span>
-                            {ja ? <span className="tag-ja">{ja}</span> : null}
-                          </span>
-                          {tagVotes[t.tag] && tagVotes[t.tag] > 1 && (
-                            <span className="vote">×{tagVotes[t.tag]}</span>
-                          )}
-                          <span className="score">{t.score.toFixed(2)}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
+                  <TagChipList
+                    tags={editableTags}
+                    votes={tagVotes}
+                    showJa={settings.showTagJa && tagJaReady}
+                    customJa={customJa}
+                    onRemove={removeTag}
+                  />
                 </div>
               )}
             </section>
