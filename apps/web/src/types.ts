@@ -69,8 +69,8 @@ export type AppSettings = {
   /** Show Japanese gloss under each result tag chip. */
   showTagJa: boolean;
   /**
-   * Supabase service_role (or sb_secret) for tag-library tables.
-   * Stored only in this browser; never committed / never baked into Pages.
+   * Optional Supabase API key override. Empty = use the baked-in public key.
+   * Kept for backwards compatibility; Settings no longer asks for this.
    */
   supabaseAnonKey: string;
 };

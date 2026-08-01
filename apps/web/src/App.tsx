@@ -140,8 +140,9 @@ export default function App() {
   }, [settings]);
 
   useEffect(() => {
-    setSupabaseAnonKeyProvider(() => settings.supabaseAnonKey);
-  }, [settings.supabaseAnonKey]);
+    // Always use the baked-in public key (Settings no longer collects one).
+    setSupabaseAnonKeyProvider(() => "");
+  }, []);
 
   // Lazy-load EN→JA dictionary when the user wants glosses (default on).
   useEffect(() => {
@@ -368,16 +369,7 @@ export default function App() {
   };
 
   const refreshLibraryStatus = async (): Promise<boolean> => {
-    setSupabaseAnonKeyProvider(() => loadSettings().supabaseAnonKey);
-    const key = loadSettings().supabaseAnonKey.trim();
-    if (!key) {
-      setLibraryStatus({
-        state: "off",
-        detail:
-          "設定に service_role（または sb_secret_…）を貼ると、履歴・お気に入り・辞書を Supabase だけで管理します。",
-      });
-      return false;
-    }
+    setSupabaseAnonKeyProvider(() => "");
     const err = await probeTagLibraryError();
     if (!err) {
       setLibraryStatus({ state: "ready" });
@@ -390,7 +382,7 @@ export default function App() {
   // Restore last image (local) + last tags from Supabase tables.
   useEffect(() => {
     let cancelled = false;
-    setSupabaseAnonKeyProvider(() => loadSettings().supabaseAnonKey);
+    setSupabaseAnonKeyProvider(() => "");
     void (async () => {
       const restoredImage = await loadLastImage();
       if (cancelled) return;
@@ -432,14 +424,6 @@ export default function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only restore
   }, []);
-
-  // Re-check when the API key changes in settings.
-  useEffect(() => {
-    void refreshLibraryStatus().then((ready) => {
-      if (ready) refreshCustomJa();
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- key-only
-  }, [settings.supabaseAnonKey]);
 
   const pickFile = (next: File | null) => {
     if (next) {

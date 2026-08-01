@@ -46,7 +46,6 @@ import { pingHelper, startHelperApi, stopHelperApi } from "./helperApi";
 import {
   probeSupabaseSync,
   SUPABASE_PROJECT_REF,
-  SUPABASE_URL,
   type SyncStatus,
 } from "./supabaseClient";
 import { isTagLibraryReady, probeTagLibraryError } from "./tagLibrary";
@@ -137,13 +136,13 @@ export function SettingsPanel({
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    void probeSupabaseSync(settings.supabaseAnonKey).then((st) => {
+    void probeSupabaseSync().then((st) => {
       if (!cancelled) setSyncStatus(st);
     });
     return () => {
       cancelled = true;
     };
-  }, [open, settings.supabaseAnonKey]);
+  }, [open]);
 
   const patch = (partial: Partial<AppSettings>) => {
     onChange((s) => ({ ...s, ...partial }));
@@ -820,34 +819,17 @@ export function SettingsPanel({
           </M3eButton>
         </div>
         <p className="settings-help">
-          履歴・お気に入り・辞書・前回セッションはすべて Supabase のテーブル（
+          履歴・お気に入り・辞書・前回セッションは Supabase（
           <code>vision_tag_sets</code> / <code>vision_tag_dictionary</code>
-          ）が唯一の保存先です。初回だけ下の SQL を Dashboard で実行し、service_role
-          をこの端末に貼ってください。
-        </p>
-        <label className="settings-field">
-          <span>Supabase service_role</span>
-          <input
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="eyJ…（service_role）または sb_secret_…"
-            value={settings.supabaseAnonKey}
-            onChange={(e) => patch({ supabaseAnonKey: e.target.value.trim() })}
-          />
-        </label>
-        <p className="settings-help">
-          Dashboard → Project Settings → API →{" "}
-          <strong>service_role</strong>
-          。この端末の localStorage のみ（Pages
-          ビルドや Git には入れない）。プロジェクト:{" "}
-          <code>{SUPABASE_PROJECT_REF}</code> · <code>{SUPABASE_URL}</code>
+          ）に自動保存されます。キーの設定は不要です。
         </p>
         <p className="settings-help">
           状態:{" "}
           {syncStatus
             ? syncStatus.detail
             : "確認中…"}
+          {" · "}
+          <code>{SUPABASE_PROJECT_REF}</code>
         </p>
         <div className="settings-presets">
           <M3eButton
@@ -855,31 +837,15 @@ export function SettingsPanel({
             variant="tonal"
             disabled={syncBusy}
             onClick={() => {
-              void navigator.clipboard.writeText(TAG_LIBRARY_SCHEMA_SQL).then(
-                () => onSnack("スキーマ SQL をコピーしました。SQL Editor で実行してください"),
-                () => onSnack("コピーに失敗しました"),
-              );
-            }}
-          >
-            <M3eIcon slot="icon" name="content_copy" />
-            SQLをコピー
-          </M3eButton>
-          <M3eButton
-            type="button"
-            variant="tonal"
-            disabled={syncBusy}
-            onClick={() => {
               setSyncBusy(true);
               void (async () => {
-                setSyncStatus(
-                  await probeSupabaseSync(settings.supabaseAnonKey),
-                );
+                setSyncStatus(await probeSupabaseSync());
                 const ok = await isTagLibraryReady();
                 const detail = ok ? null : await probeTagLibraryError();
                 onSnack(
                   ok
                     ? "Supabase テーブルに接続できました"
-                    : detail || "未接続（キーまたは SQL 実行を確認）",
+                    : detail || "未接続です",
                 );
                 setSyncBusy(false);
               })();
@@ -888,13 +854,27 @@ export function SettingsPanel({
             <M3eIcon slot="icon" name="refresh" />
             再確認
           </M3eButton>
+          <M3eButton
+            type="button"
+            variant="tonal"
+            disabled={syncBusy}
+            onClick={() => {
+              void navigator.clipboard.writeText(TAG_LIBRARY_SCHEMA_SQL).then(
+                () => onSnack("スキーマ SQL をコピーしました"),
+                () => onSnack("コピーに失敗しました"),
+              );
+            }}
+          >
+            <M3eIcon slot="icon" name="content_copy" />
+            SQLをコピー
+          </M3eButton>
           <a
             className="btn-text"
             href={`https://supabase.com/dashboard/project/${SUPABASE_PROJECT_REF}/sql/new`}
             target="_blank"
             rel="noreferrer"
           >
-            SQL Editorを開く
+            SQL Editor
           </a>
         </div>
       </div>

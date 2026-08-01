@@ -1,7 +1,7 @@
 /**
  * Tag library stored entirely in Supabase Postgres (vision_tag_sets /
  * vision_tag_dictionary). No IndexedDB sync — Supabase is the source of truth.
- * Requires the service_role (or sb_secret) API key in settings.
+ * Uses the baked-in public (anon/publishable) API key; Settings paste is optional.
  */
 
 import { describeError, logInfo, logWarn } from "./diagnostics";
@@ -84,9 +84,7 @@ function key(): string {
 function requireClient() {
   const sb = getSupabase(key());
   if (!sb) {
-    throw new Error(
-      "Supabase API キー未設定。設定 → タグライブラリに service_role を貼ってください。",
-    );
+    throw new Error("Supabase クライアントを初期化できませんでした。");
   }
   return sb;
 }

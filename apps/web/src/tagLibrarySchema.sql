@@ -1,5 +1,5 @@
 -- Paste into Supabase Dashboard → SQL Editor → Run (once).
--- vision tag library — service_role managed
+-- vision tag library — public anon access (personal Pages app)
 
 create extension if not exists "pgcrypto";
 
@@ -41,10 +41,25 @@ create index if not exists vision_tag_dictionary_updated_idx
 alter table public.vision_tag_sets enable row level security;
 alter table public.vision_tag_dictionary enable row level security;
 
-revoke all on public.vision_tag_sets from anon, authenticated;
-revoke all on public.vision_tag_dictionary from anon, authenticated;
+grant select, insert, update, delete on public.vision_tag_sets to anon, authenticated;
+grant select, insert, update, delete on public.vision_tag_dictionary to anon, authenticated;
 grant all on public.vision_tag_sets to service_role;
 grant all on public.vision_tag_dictionary to service_role;
 
--- Refresh PostgREST schema cache
+drop policy if exists vision_tag_sets_anon_all on public.vision_tag_sets;
+create policy vision_tag_sets_anon_all
+  on public.vision_tag_sets
+  for all
+  to anon, authenticated
+  using (true)
+  with check (true);
+
+drop policy if exists vision_tag_dictionary_anon_all on public.vision_tag_dictionary;
+create policy vision_tag_dictionary_anon_all
+  on public.vision_tag_dictionary
+  for all
+  to anon, authenticated
+  using (true)
+  with check (true);
+
 notify pgrst, 'reload schema';

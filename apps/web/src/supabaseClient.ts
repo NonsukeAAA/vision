@@ -8,6 +8,13 @@ export const SUPABASE_URL =
   (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim() ||
   `https://${SUPABASE_PROJECT_REF}.supabase.co`;
 
+/**
+ * Public publishable / anon key — baked into the client so Settings is optional.
+ * Tables are opened to `anon` via RLS for this personal app.
+ */
+const DEFAULT_PUBLIC_API_KEY =
+  "sb_publishable_4qtStRRg_8wc_VkJ01yalw_0zEi0nmn";
+
 const ENV_API_KEY =
   (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim() ||
   (import.meta.env.VITE_SUPABASE_API_KEY as string | undefined)?.trim() ||
@@ -17,7 +24,11 @@ let client: SupabaseClient | null = null;
 let activeKey = "";
 
 export function resolveApiKey(settingsKey?: string): string {
-  return (settingsKey?.trim() || ENV_API_KEY).trim();
+  return (
+    settingsKey?.trim() ||
+    ENV_API_KEY ||
+    DEFAULT_PUBLIC_API_KEY
+  ).trim();
 }
 
 export function isSupabaseConfigured(settingsKey?: string): boolean {
@@ -73,15 +84,7 @@ export async function probeSupabaseSync(
   if (!key) {
     return {
       state: "off",
-      detail:
-        "service_role（または sb_secret_…）を設定に貼ると、タグライブラリを Supabase だけで管理します。",
-    };
-  }
-  if (!isSecretApiKey(key)) {
-    return {
-      state: "error",
-      detail:
-        "anon キーではテーブルにアクセスできません。service_role / sb_secret を使ってください。",
+      detail: "Supabase API キーがありません。",
     };
   }
   const sb = getSupabase(key);
@@ -105,7 +108,7 @@ export async function probeSupabaseSync(
     }
     return {
       state: "ok",
-      detail: `Supabase DB 管理中 · ${SUPABASE_PROJECT_REF}`,
+      detail: `Supabase DB 接続中 · ${SUPABASE_PROJECT_REF}`,
     };
   } catch (err) {
     const msg = describeError(err).message;

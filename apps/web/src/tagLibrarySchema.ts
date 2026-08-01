@@ -1,5 +1,5 @@
 /** One-time SQL for Supabase Dashboard → SQL Editor. */
-export const TAG_LIBRARY_SCHEMA_SQL = `-- vision tag library — service_role managed
+export const TAG_LIBRARY_SCHEMA_SQL = `-- vision tag library — public anon access
 create extension if not exists "pgcrypto";
 
 create table if not exists public.vision_tag_sets (
@@ -40,10 +40,26 @@ create index if not exists vision_tag_dictionary_updated_idx
 alter table public.vision_tag_sets enable row level security;
 alter table public.vision_tag_dictionary enable row level security;
 
-revoke all on public.vision_tag_sets from anon, authenticated;
-revoke all on public.vision_tag_dictionary from anon, authenticated;
+grant select, insert, update, delete on public.vision_tag_sets to anon, authenticated;
+grant select, insert, update, delete on public.vision_tag_dictionary to anon, authenticated;
 grant all on public.vision_tag_sets to service_role;
 grant all on public.vision_tag_dictionary to service_role;
+
+drop policy if exists vision_tag_sets_anon_all on public.vision_tag_sets;
+create policy vision_tag_sets_anon_all
+  on public.vision_tag_sets
+  for all
+  to anon, authenticated
+  using (true)
+  with check (true);
+
+drop policy if exists vision_tag_dictionary_anon_all on public.vision_tag_dictionary;
+create policy vision_tag_dictionary_anon_all
+  on public.vision_tag_dictionary
+  for all
+  to anon, authenticated
+  using (true)
+  with check (true);
 
 notify pgrst, 'reload schema';
 `;
