@@ -44,4 +44,6 @@ revoke all on public.vision_tag_sets from anon, authenticated;
 revoke all on public.vision_tag_dictionary from anon, authenticated;
 grant all on public.vision_tag_sets to service_role;
 grant all on public.vision_tag_dictionary to service_role;
+
+notify pgrst, 'reload schema';
 `;
