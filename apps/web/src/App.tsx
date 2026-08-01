@@ -43,16 +43,19 @@ import { clearLastImage, loadLastImage, saveLastImage } from "./lastImage";
 import {
   addFavorite,
   buildTagSet,
+  importFromStorageIfEmpty,
   isFavorite,
   loadCustomJaMap,
   loadLastSession,
+  probeTagLibraryError,
   removeFavorite,
   saveGeneratedSet,
   saveLastSession,
   setSupabaseAnonKeyProvider,
-  syncLibraryFromRemote,
   type TagSetRecord,
 } from "./tagLibrary";
+import { TAG_LIBRARY_SCHEMA_SQL } from "./tagLibrarySchema";
+import { SUPABASE_PROJECT_REF } from "./supabaseClient";
 import {
   describeError,
   getPreviousSessionReport,
@@ -63,6 +66,11 @@ import {
 } from "./diagnostics";
 
 type Screen = "home" | "working" | "result";
+type LibraryStatus =
+  | { state: "checking" }
+  | { state: "ready" }
+  | { state: "off"; detail: string }
+  | { state: "error"; detail: string };
 
 export default function App() {
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
@@ -94,6 +102,9 @@ export default function App() {
   const [grokBusy, setGrokBusy] = useState(false);
   const [tagJaReady, setTagJaReady] = useState(() => isTagJaReady());
   const [tagVotes, setTagVotes] = useState<Record<string, number>>({});
+  const [libraryStatus, setLibraryStatus] = useState<LibraryStatus>({
+    state: "checking",
+  });
   const [, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
   const resultRef = useRef<HTMLElement>(null);
@@ -356,6 +367,26 @@ export default function App() {
     });
   };
 
+  const refreshLibraryStatus = async (): Promise<boolean> => {
+    setSupabaseAnonKeyProvider(() => loadSettings().supabaseAnonKey);
+    const key = loadSettings().supabaseAnonKey.trim();
+    if (!key) {
+      setLibraryStatus({
+        state: "off",
+        detail:
+          "設定に service_role（または sb_secret_…）を貼ると、履歴・お気に入り・辞書を Supabase だけで管理します。",
+      });
+      return false;
+    }
+    const err = await probeTagLibraryError();
+    if (!err) {
+      setLibraryStatus({ state: "ready" });
+      return true;
+    }
+    setLibraryStatus({ state: "error", detail: err });
+    return false;
+  };
+
   // Restore last image (local) + last tags from Supabase tables.
   useEffect(() => {
     let cancelled = false;
@@ -367,9 +398,14 @@ export default function App() {
         setFile(restoredImage);
         setPreviewUrl(URL.createObjectURL(restoredImage));
       }
-      const ready = await syncLibraryFromRemote();
+      const ready = await refreshLibraryStatus();
       if (cancelled) return;
-      if (ready) refreshCustomJa();
+      let imported = false;
+      if (ready) {
+        imported = await importFromStorageIfEmpty();
+        if (cancelled) return;
+        refreshCustomJa();
+      }
       const session = ready ? await loadLastSession() : null;
       if (cancelled) return;
       if (session?.tags?.length) {
@@ -377,8 +413,12 @@ export default function App() {
         setSnack(
           restoredImage
             ? "Supabase のタグと前回の画像を復元しました"
-            : "Supabase から前回のタグを復元しました",
+            : imported
+              ? "Storage から取り込み、前回のタグを復元しました"
+              : "Supabase から前回のタグを復元しました",
         );
+      } else if (imported) {
+        setSnack("Storage のタグライブラリを DB に取り込みました");
       } else if (restoredImage) {
         setSnack(
           ready
@@ -392,6 +432,14 @@ export default function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only restore
   }, []);
+
+  // Re-check when the API key changes in settings.
+  useEffect(() => {
+    void refreshLibraryStatus().then((ready) => {
+      if (ready) refreshCustomJa();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- key-only
+  }, [settings.supabaseAnonKey]);
 
   const pickFile = (next: File | null) => {
     if (next) {
@@ -568,10 +616,22 @@ export default function App() {
         votes: nextVotes,
         sourceNote: next.source?.note ?? "",
       });
-      void saveGeneratedSet(record).then(() => {
-        void isFavorite(record.id).then(setFavorited);
-        refreshCustomJa();
-      });
+      void saveGeneratedSet(record)
+        .then(() => {
+          void isFavorite(record.id).then(setFavorited);
+          refreshCustomJa();
+          void refreshLibraryStatus();
+        })
+        .catch((err) => {
+          const raw = describeError(err).message;
+          const msg = typeof raw === "string" && raw ? raw : String(err);
+          setSnack(
+            /Could not find the table|PGRST205/i.test(msg)
+              ? "タグをDBに保存できません（テーブル未作成）。設定から SQL を実行してください"
+              : `タグのDB保存に失敗: ${msg}`,
+          );
+          void refreshLibraryStatus();
+        });
       logInfo("analyze done", {
         ms: performance.now() - startedAt,
         tags: forcedTags.length,
@@ -1103,6 +1163,65 @@ export default function App() {
               </div>
             </div>
           )}
+
+          {libraryStatus.state !== "checking" &&
+            libraryStatus.state !== "ready" && (
+              <div className="notice" role="status">
+                <span>
+                  タグライブラリ未接続:{" "}
+                  {"detail" in libraryStatus
+                    ? libraryStatus.detail
+                    : "Supabase を確認してください"}
+                </span>
+                <div className="error-actions">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard
+                        .writeText(TAG_LIBRARY_SCHEMA_SQL)
+                        .then(
+                          () =>
+                            setSnack(
+                              "スキーマ SQL をコピーしました。SQL Editor で実行してください",
+                            ),
+                          () => setSnack("コピーに失敗しました"),
+                        );
+                    }}
+                  >
+                    SQLをコピー
+                  </button>
+                  <a
+                    className="btn-text"
+                    href={`https://supabase.com/dashboard/project/${SUPABASE_PROJECT_REF}/sql/new`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    SQL Editor
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => setShowSettings(true)}
+                  >
+                    設定
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void refreshLibraryStatus().then((ok) => {
+                        if (ok) {
+                          setSnack("Supabase テーブルに接続できました");
+                          refreshCustomJa();
+                        } else {
+                          setSnack("まだ未接続です");
+                        }
+                      });
+                    }}
+                  >
+                    再確認
+                  </button>
+                </div>
+              </div>
+            )}
 
           {error && (
             <div className="error" role="alert">

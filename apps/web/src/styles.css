@@ -1465,9 +1465,20 @@ select {
   font-size: 0.8125rem;
 }
 
-.notice .error-actions button {
+.notice .error-actions button,
+.notice .error-actions a.btn-text {
   color: inherit;
   border-color: rgba(109, 76, 17, 0.4);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.75rem;
+  border: 1px solid rgba(109, 76, 17, 0.4);
+  border-radius: 999px;
+  font: inherit;
+  font-size: inherit;
+  background: transparent;
+  cursor: pointer;
 }
 
 .error-actions {

@@ -49,7 +49,7 @@ import {
   SUPABASE_URL,
   type SyncStatus,
 } from "./supabaseClient";
-import { isTagLibraryReady } from "./tagLibrary";
+import { isTagLibraryReady, probeTagLibraryError } from "./tagLibrary";
 import { TAG_LIBRARY_SCHEMA_SQL } from "./tagLibrarySchema";
 
 type Props = {
@@ -822,7 +822,8 @@ export function SettingsPanel({
         <p className="settings-help">
           履歴・お気に入り・辞書・前回セッションはすべて Supabase のテーブル（
           <code>vision_tag_sets</code> / <code>vision_tag_dictionary</code>
-          ）で管理します。端末への同期キャッシュはありません。
+          ）が唯一の保存先です。初回だけ下の SQL を Dashboard で実行し、service_role
+          をこの端末に貼ってください。
         </p>
         <label className="settings-field">
           <span>Supabase service_role</span>
@@ -874,10 +875,11 @@ export function SettingsPanel({
                   await probeSupabaseSync(settings.supabaseAnonKey),
                 );
                 const ok = await isTagLibraryReady();
+                const detail = ok ? null : await probeTagLibraryError();
                 onSnack(
                   ok
                     ? "Supabase テーブルに接続できました"
-                    : "未接続（キーまたは SQL 実行を確認）",
+                    : detail || "未接続（キーまたは SQL 実行を確認）",
                 );
                 setSyncBusy(false);
               })();

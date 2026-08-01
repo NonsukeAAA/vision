@@ -12,6 +12,7 @@ import {
   listDictionary,
   listFavorites,
   listHistory,
+  probeTagLibraryError,
   removeFavorite,
   upsertDictEntry,
   type DictEntry,
@@ -60,8 +61,18 @@ export function TagLibraryDialog({
   const [editJa, setEditJa] = useState("");
   const [editNote, setEditNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const [connError, setConnError] = useState<string | null>(null);
 
   const reload = async () => {
+    const err = await probeTagLibraryError();
+    setConnError(err);
+    if (err) {
+      setHistory([]);
+      setFavorites([]);
+      setDict([]);
+      setFavIds(new Set());
+      return;
+    }
     const [h, f, d] = await Promise.all([
       listHistory(),
       listFavorites(),
@@ -283,6 +294,11 @@ export function TagLibraryDialog({
           vision_tag_dictionary）に保存されています。バックアップ JSON
           のエクスポート／インポートもできます。
         </p>
+        {connError && (
+          <p className="notice" role="status">
+            未接続: {connError}
+          </p>
+        )}
 
         <div className="tag-lib-tabs" role="tablist">
           {(

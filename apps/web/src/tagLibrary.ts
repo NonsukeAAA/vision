@@ -320,6 +320,7 @@ export async function saveGeneratedSet(record: TagSetRecord): Promise<void> {
     });
   } catch (err) {
     logWarn("tag set save failed", describeError(err));
+    throw err;
   }
 }
 
@@ -570,4 +571,38 @@ export async function syncLibraryFromRemote(): Promise<boolean> {
 /** @deprecated Writes already go to Supabase directly. */
 export async function syncLibraryToRemote(): Promise<boolean> {
   return isTagLibraryReady();
+}
+
+/**
+ * One-time import from the earlier Storage document (vision-library/library.json)
+ * into Postgres tables, if tables are empty.
+ */
+export async function importFromStorageIfEmpty(): Promise<boolean> {
+  try {
+    if (!(await isTagLibraryReady())) return false;
+    const hist = await listHistory();
+    const fav = await listFavorites();
+    const dict = await listDictionary();
+    if (hist.length || fav.length || dict.length) return false;
+
+    const sb = requireClient();
+    const { data, error } = await sb.storage
+      .from("vision-library")
+      .download("library.json");
+    if (error || !data) return false;
+    const text = await data.text();
+    if (!text.trim()) return false;
+    const parsed = JSON.parse(text) as TagLibraryExport;
+    if (parsed?.version !== 1) return false;
+    await importLibrary(parsed, "merge");
+    logInfo("imported storage library into postgres", {
+      history: parsed.history?.length ?? 0,
+      favorites: parsed.favorites?.length ?? 0,
+      dict: parsed.dictionary?.length ?? 0,
+    });
+    return true;
+  } catch (err) {
+    logWarn("storage→db import skipped", describeError(err));
+    return false;
+  }
 }
