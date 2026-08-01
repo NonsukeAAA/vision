@@ -9,7 +9,6 @@ type Props = {
   open: boolean;
   tags: TagScore[];
   votes: Record<string, number>;
-  prompt: string;
   showJa: boolean;
   customJa: Record<string, string>;
   canUndo: boolean;
@@ -24,7 +23,6 @@ export function TagsFullscreenDialog({
   open,
   tags,
   votes,
-  prompt,
   showJa,
   customJa,
   canUndo,
@@ -70,7 +68,7 @@ export function TagsFullscreenDialog({
             <M3eButton
               type="button"
               variant="filled"
-              disabled={!prompt.trim()}
+              disabled={tags.length === 0}
               onClick={onCopy}
             >
               <M3eIcon slot="icon" name="content_copy" />

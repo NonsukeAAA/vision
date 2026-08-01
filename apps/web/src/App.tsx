@@ -39,6 +39,7 @@ import { LogDialog } from "./LogDialog";
 import { TagChipList } from "./TagChipList";
 import { TagLibraryDialog } from "./TagLibraryDialog";
 import { TagsFullscreenDialog } from "./TagsFullscreenDialog";
+import { CropImageDialog } from "./CropImageDialog";
 import { clearLastImage, loadLastImage, saveLastImage } from "./lastImage";
 import {
   addFavorite,
@@ -88,6 +89,7 @@ export default function App() {
   const [showLog, setShowLog] = useState(false);
   const [showTagsFs, setShowTagsFs] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
+  const [showCrop, setShowCrop] = useState(false);
   const [undoStack, setUndoStack] = useState<TagScore[]>([]);
   const [customJa, setCustomJa] = useState<Record<string, string>>({});
   const [favorited, setFavorited] = useState(false);
@@ -242,7 +244,6 @@ export default function App() {
     if (screen !== "result") return;
     const id = window.requestAnimationFrame(() => {
       resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      promptRef.current?.focus({ preventScroll: true });
     });
     return () => window.cancelAnimationFrame(id);
   }, [screen, result]);
@@ -706,14 +707,6 @@ export default function App() {
     }
   };
 
-  const syncPromptFromTags = () => {
-    const next = rebuildPrompt(editableTags, result?.caption ?? null, settings.mode);
-    setPrompt(next);
-    setCopied(false);
-    scheduleSessionSave(editableTags, next);
-    setSnack("タグからプロンプトを再生成しました");
-  };
-
   const runGrokPrompt = async () => {
     if (grokBusy) return;
     if (!settings.xaiApiKey.trim()) {
@@ -749,18 +742,44 @@ export default function App() {
     }
   };
 
+  const promptFromTags = () =>
+    editableTags
+      .map((t) => t.tag)
+      .filter(Boolean)
+      .join(", ");
+
   const copyPrompt = async () => {
-    if (!prompt.trim()) return;
+    const text = promptFromTags() || prompt.trim();
+    if (!text) return;
     try {
-      await navigator.clipboard.writeText(prompt);
+      await navigator.clipboard.writeText(text);
       setCopied(true);
-      setSnack("プロンプトをコピーしました");
+      setSnack("カンマ区切りでコピーしました");
       if (copyResetRef.current) window.clearTimeout(copyResetRef.current);
       copyResetRef.current = window.setTimeout(() => setCopied(false), 2000);
     } catch {
-      setSnack("コピーに失敗しました。手動で選択してください");
-      promptRef.current?.select();
+      setSnack("コピーに失敗しました");
     }
+  };
+
+  const applyCroppedImage = (next: File) => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setFile(next);
+    setPreviewUrl(URL.createObjectURL(next));
+    // Crop changes the pixels — clear prior tags so the next analyze matches.
+    setResult(null);
+    setEditableTags([]);
+    setPrompt("");
+    setTagVotes({});
+    setUndoStack([]);
+    setFavorited(false);
+    sessionIdRef.current = null;
+    sessionCreatedAtRef.current = null;
+    setScreen("home");
+    void saveLastImage(next).catch((err) =>
+      logWarn("saveLastImage failed", describeError(err)),
+    );
+    setSnack("クロップを保存しました。再解析してください");
   };
 
   const runTagRef = useRef(runTag);
@@ -790,7 +809,9 @@ export default function App() {
   return (
     <M3eTheme color="#3D5A80" variant="tonal-spot" scheme="light" motion="expressive">
       <div className="atmosphere" aria-hidden="true" />
-      <div className={`app-shell ${showingResult ? "has-dock" : ""}`}>
+      <div
+        className={`app-shell ${showingResult ? "has-dock" : ""} ${previewUrl ? "has-image" : ""}`}
+      >
         <div className="toolbar">
           <span className="muted" title={apiStatus}>
             {apiStatus || "準備中…"}
@@ -852,7 +873,6 @@ export default function App() {
           open={showTagsFs}
           tags={editableTags}
           votes={tagVotes}
-          prompt={prompt}
           showJa={settings.showTagJa && tagJaReady}
           customJa={customJa}
           canUndo={undoStack.length > 0}
@@ -861,6 +881,14 @@ export default function App() {
           onCopy={() => void copyPrompt()}
           onClose={() => setShowTagsFs(false)}
           copied={copied}
+        />
+
+        <CropImageDialog
+          open={showCrop}
+          file={file}
+          onClose={() => setShowCrop(false)}
+          onCropped={applyCroppedImage}
+          onError={(message) => setSnack(message)}
         />
 
         <header className={`brand ${showingResult ? "brand-compact" : ""}`}>
@@ -989,43 +1017,63 @@ export default function App() {
             </div>
           )}
 
-          {showingResult && previewUrl ? (
-            <div className="workbench">
+          {previewUrl ? (
+            <div className="image-hero">
               <button
                 type="button"
-                className="workbench-thumb"
+                className="image-hero-frame"
                 onClick={() => inputRef.current?.click()}
                 title="画像を変更"
                 aria-label="画像を変更"
               >
-                <img src={previewUrl} alt="" />
+                <img src={previewUrl} alt="選択中の画像" />
               </button>
-              <div className="workbench-meta">
-                <p className="workbench-title">{settings.mode}</p>
-                <p className="muted workbench-sub">
-                  {tagCount} tags
-                  {result?.device ? ` · ${result.device}` : ""}
+              <div className="image-hero-bar">
+                <p className="muted image-hero-meta">
+                  {showingResult
+                    ? `${settings.mode}${tagCount ? ` · ${tagCount} tags` : ""}${
+                        result?.device ? ` · ${result.device}` : ""
+                      }`
+                    : file?.name || "選択中の画像"}
                 </p>
-              </div>
-              <div className="workbench-actions">
-                <button
-                  type="button"
-                  className="btn-text"
-                  disabled={!canAnalyze}
-                  onClick={() => void runTag()}
-                >
-                  再解析
-                </button>
-                <button
-                  type="button"
-                  className="btn-text"
-                  onClick={() => {
-                    setScreen("home");
-                    window.scrollTo({ top: 0, behavior: "smooth" });
-                  }}
-                >
-                  戻る
-                </button>
+                <div className="image-hero-actions">
+                  <button
+                    type="button"
+                    className="btn-text"
+                    onClick={() => setShowCrop(true)}
+                  >
+                    クロップ
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-text"
+                    onClick={() => inputRef.current?.click()}
+                  >
+                    変更
+                  </button>
+                  {showingResult && (
+                    <>
+                      <button
+                        type="button"
+                        className="btn-text"
+                        disabled={!canAnalyze}
+                        onClick={() => void runTag()}
+                      >
+                        再解析
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-text"
+                        onClick={() => {
+                          setScreen("home");
+                          window.scrollTo({ top: 0, behavior: "smooth" });
+                        }}
+                      >
+                        戻る
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
               <input
                 ref={inputRef}
@@ -1036,64 +1084,58 @@ export default function App() {
               />
             </div>
           ) : (
-            <>
-              <div
-                className={`dropzone ${dragging ? "dragging" : ""} ${screen === "working" ? "busy" : ""}`}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") inputRef.current?.click();
-                }}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setDragging(true);
-                }}
-                onDragLeave={() => setDragging(false)}
-                onDrop={onDrop}
-                onClick={() => inputRef.current?.click()}
-              >
-                {previewUrl ? (
-                  <img className="preview" src={previewUrl} alt="選択中の画像" />
-                ) : (
-                  <>
-                    <strong>画像をドロップ</strong>
-                    <span className="muted">クリックでも選択可</span>
-                  </>
-                )}
-                <input
-                  ref={inputRef}
-                  type="file"
-                  accept="image/*"
-                  hidden
-                  onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
-                />
-              </div>
+            <div
+              className={`dropzone ${dragging ? "dragging" : ""} ${screen === "working" ? "busy" : ""}`}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") inputRef.current?.click();
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragging(true);
+              }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={onDrop}
+              onClick={() => inputRef.current?.click()}
+            >
+              <strong>画像をドロップ</strong>
+              <span className="muted">クリックでも選択可</span>
+              <input
+                ref={inputRef}
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
+              />
+            </div>
+          )}
 
-              <div className="cta-block">
-                <button
-                  type="button"
-                  className="btn btn-primary btn-block"
-                  disabled={!canAnalyze}
-                  onClick={() => void runTag()}
-                >
-                  {screen === "working" ? "解析中…" : "解析する"}
-                </button>
-                <div className="cta-meta">
-                  {file ? (
-                    <button
-                      type="button"
-                      className="btn-text"
-                      onClick={() => pickFile(null)}
-                    >
-                      クリア
-                    </button>
-                  ) : (
-                    <span />
-                  )}
-                  <span className="shortcut-hint">⌘/Ctrl + Enter</span>
-                </div>
+          {!showingResult && (
+            <div className="cta-block">
+              <button
+                type="button"
+                className="btn btn-primary btn-block"
+                disabled={!canAnalyze}
+                onClick={() => void runTag()}
+              >
+                {screen === "working" ? "解析中…" : "解析する"}
+              </button>
+              <div className="cta-meta">
+                {file ? (
+                  <button
+                    type="button"
+                    className="btn-text"
+                    onClick={() => pickFile(null)}
+                  >
+                    クリア
+                  </button>
+                ) : (
+                  <span />
+                )}
+                <span className="shortcut-hint">⌘/Ctrl + Enter</span>
               </div>
-            </>
+            </div>
           )}
 
           {screen === "working" && (
@@ -1227,57 +1269,32 @@ export default function App() {
                 <p className="muted result-note">{result.source.note}</p>
               )}
 
-              <div className="prompt-block">
-                <div className="prompt-label-row">
-                  <label className="prompt-label" htmlFor="prompt-field">
-                    プロンプト
-                  </label>
-                  <div className="prompt-actions">
-                    <button
-                      type="button"
-                      className="btn-text"
-                      onClick={() => void runGrokPrompt()}
-                      disabled={grokBusy}
-                      title={
-                        settings.xaiApiKey.trim()
-                          ? "Grok で SD 用プロンプトを作成（従量課金）"
-                          : "設定で xAI API キーが必要です"
-                      }
-                    >
-                      {grokBusy ? "Grok 生成中…" : "Grokで作成"}
-                    </button>
-                    <span className="muted result-sub">
-                      {tagCount > 0 ? `${tagCount} tags` : "編集可"}
-                    </span>
+              {editableTags.length === 0 && (
+                <div className="prompt-block">
+                  <div className="prompt-label-row">
+                    <label className="prompt-label" htmlFor="prompt-field">
+                      プロンプト
+                    </label>
+                    <span className="muted result-sub">編集可</span>
+                  </div>
+                  <div className="prompt-shell">
+                    <textarea
+                      id="prompt-field"
+                      ref={promptRef}
+                      className="prompt-box"
+                      value={prompt}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setPrompt(value);
+                        setCopied(false);
+                        scheduleSessionSave(editableTagsRef.current, value);
+                      }}
+                      aria-label="生成プロンプト"
+                      rows={6}
+                    />
                   </div>
                 </div>
-                <div className="prompt-shell">
-                  <textarea
-                    id="prompt-field"
-                    ref={promptRef}
-                    className="prompt-box"
-                    value={prompt}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setPrompt(value);
-                      setCopied(false);
-                      scheduleSessionSave(editableTagsRef.current, value);
-                    }}
-                    aria-label="生成プロンプト"
-                    rows={6}
-                  />
-                  <button
-                    type="button"
-                    className={`btn-icon-copy ${copied ? "is-copied" : ""}`}
-                    onClick={() => void copyPrompt()}
-                    disabled={!prompt.trim()}
-                    aria-label={copied ? "コピー済み" : "プロンプトをコピー"}
-                    title="コピー (⌘⇧C)"
-                  >
-                    {copied ? "済" : "Copy"}
-                  </button>
-                </div>
-              </div>
+              )}
 
               {editableTags.length > 0 && (
                 <div className="tags-block">
@@ -1314,13 +1331,6 @@ export default function App() {
                       >
                         全画面
                       </button>
-                      <button
-                        type="button"
-                        className="btn-text"
-                        onClick={syncPromptFromTags}
-                      >
-                        再生成
-                      </button>
                     </div>
                   </div>
                   <TagChipList
@@ -1350,7 +1360,7 @@ export default function App() {
               type="button"
               className={`btn btn-primary btn-dock-copy ${copied ? "is-copied" : ""}`}
               onClick={() => void copyPrompt()}
-              disabled={!prompt.trim() || grokBusy}
+              disabled={(!tagCount && !prompt.trim()) || grokBusy}
             >
               {copied ? "コピーしました" : "コピー"}
             </button>
