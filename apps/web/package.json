@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
-    "build:pages": "tsc --noEmit && node scripts/pack-helper-windows.mjs && vite build && node scripts/copy-pixai-q4.mjs",
+    "predev": "node scripts/fetch-tag-ja.mjs",
+    "build": "tsc --noEmit && node scripts/fetch-tag-ja.mjs && vite build",
+    "build:pages": "tsc --noEmit && node scripts/fetch-tag-ja.mjs && node scripts/pack-helper-windows.mjs && vite build && node scripts/copy-pixai-q4.mjs",
+    "fetch:tag-ja": "node scripts/fetch-tag-ja.mjs",
     "pack:helper": "node scripts/pack-helper-windows.mjs",
     "preview": "vite preview",
     "lint": "tsc --noEmit --pretty false"

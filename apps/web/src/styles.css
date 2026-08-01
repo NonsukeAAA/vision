@@ -310,6 +310,8 @@ select {
 }
 
 .tag-chip .vote {
+  align-self: flex-start;
+  margin-top: 2px;
   color: var(--accent);
   font-family: var(--font-mono);
   font-size: 0.625rem;
@@ -728,7 +730,7 @@ select {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  max-height: 148px;
+  max-height: 220px;
   overflow: auto;
 }
 
@@ -758,7 +760,31 @@ select {
   background: var(--accent-soft);
 }
 
+.tag-chip-main {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
+  text-align: left;
+  line-height: 1.2;
+}
+
+.tag-en {
+  font-size: 0.75rem;
+  font-weight: 450;
+}
+
+.tag-ja {
+  font-size: 0.625rem;
+  font-weight: 400;
+  color: var(--ink-3);
+  letter-spacing: 0.01em;
+}
+
 .tag-chip .score {
+  align-self: flex-start;
+  margin-top: 2px;
   color: var(--ink-3);
   font-family: var(--font-mono);
   font-size: 0.625rem;

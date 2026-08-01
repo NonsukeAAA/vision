@@ -31,6 +31,7 @@ import {
 } from "./wdBrowser";
 import { forceUncensoredTags, forcedPrefixTags, setCustomDropTags, setCustomInsertTags, setInsertQualityEnabled } from "./forceUncensored";
 import { generateSdPromptWithGrok } from "./grokPrompt";
+import { ensureTagJaLoaded, isTagJaReady, translateTag } from "./tagJa";
 import { SettingsPanel } from "./SettingsPanel";
 import { DropTagsDialog } from "./DropTagsDialog";
 import { InsertTagsDialog } from "./InsertTagsDialog";
@@ -70,6 +71,7 @@ export default function App() {
   const [snack, setSnack] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [grokBusy, setGrokBusy] = useState(false);
+  const [tagJaReady, setTagJaReady] = useState(() => isTagJaReady());
   const [tagVotes, setTagVotes] = useState<Record<string, number>>({});
   const [, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -93,6 +95,22 @@ export default function App() {
   useEffect(() => {
     saveSettings(settings);
   }, [settings]);
+
+  // Lazy-load EN→JA dictionary when the user wants glosses (default on).
+  useEffect(() => {
+    if (!settings.showTagJa) return;
+    let cancelled = false;
+    void ensureTagJaLoaded()
+      .then(() => {
+        if (!cancelled) setTagJaReady(true);
+      })
+      .catch(() => {
+        if (!cancelled) setTagJaReady(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [settings.showTagJa]);
 
 
   // Only free other models when the active selection changes — never on every render.
@@ -904,28 +922,35 @@ export default function App() {
                       const locked = forcedPrefixTags().includes(
                         t.tag.trim().toLowerCase().replaceAll("_", " "),
                       );
+                      const ja =
+                        settings.showTagJa && tagJaReady
+                          ? translateTag(t.tag)
+                          : null;
                       return (
-                      <button
-                        key={t.tag}
-                        type="button"
-                        className={`tag-chip ${locked ? "tag-locked" : ""}`}
-                        onClick={() => {
-                          if (!locked) removeTag(t.tag);
-                        }}
-                        title={
-                          locked
-                            ? "設定の挿入タグから変更できます"
-                            : tagVotes[t.tag]
-                              ? `${tagVotes[t.tag]}モデルが一致 · クリックで削除`
-                              : "クリックで削除"
-                        }
-                      >
-                        {t.tag}
-                        {tagVotes[t.tag] && tagVotes[t.tag] > 1 && (
-                          <span className="vote">×{tagVotes[t.tag]}</span>
-                        )}
-                        <span className="score">{t.score.toFixed(2)}</span>
-                      </button>
+                        <button
+                          key={t.tag}
+                          type="button"
+                          className={`tag-chip ${locked ? "tag-locked" : ""}`}
+                          onClick={() => {
+                            if (!locked) removeTag(t.tag);
+                          }}
+                          title={
+                            locked
+                              ? "設定の挿入タグから変更できます"
+                              : tagVotes[t.tag]
+                                ? `${tagVotes[t.tag]}モデルが一致 · クリックで削除`
+                                : "クリックで削除"
+                          }
+                        >
+                          <span className="tag-chip-main">
+                            <span className="tag-en">{t.tag}</span>
+                            {ja ? <span className="tag-ja">{ja}</span> : null}
+                          </span>
+                          {tagVotes[t.tag] && tagVotes[t.tag] > 1 && (
+                            <span className="vote">×{tagVotes[t.tag]}</span>
+                          )}
+                          <span className="score">{t.score.toFixed(2)}</span>
+                        </button>
                       );
                     })}
                   </div>

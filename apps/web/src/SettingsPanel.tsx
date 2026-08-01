@@ -760,6 +760,32 @@ export function SettingsPanel({
       <div className="settings-block">
         <div className="settings-block-head">
           <h3 className="settings-block-title">
+            <M3eIcon name="translate" />
+            表示
+          </h3>
+        </div>
+        <label className="settings-switch">
+          <span>タグに日本語訳を表示</span>
+          <M3eSwitch
+            checked={settings.showTagJa}
+            onChange={(e) => {
+              const el = e.currentTarget as HTMLElement & {
+                checked?: boolean;
+              };
+              patch({ showTagJa: !!el.checked });
+            }}
+          />
+        </label>
+        <p className="settings-help">
+          生成タグの下に日本語訳を併記します。プロンプト本文は英語のままです。
+        </p>
+      </div>
+
+      <M3eDivider />
+
+      <div className="settings-block">
+        <div className="settings-block-head">
+          <h3 className="settings-block-title">
             <M3eIcon name="bug_report" />
             診断ログ
           </h3>
