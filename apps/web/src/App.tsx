@@ -898,7 +898,11 @@ export default function App() {
                   title="画像を変更"
                   aria-label="画像を変更"
                 >
-                  <img src={previewUrl} alt="選択中の画像" />
+                  <img
+                    className="image-hero-photo"
+                    src={previewUrl}
+                    alt="選択中の画像"
+                  />
                 </button>
               </div>
               <div className="image-hero-bar">
