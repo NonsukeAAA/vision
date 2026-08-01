@@ -156,11 +156,21 @@ function rowToDict(row: DictRow): DictEntry {
   };
 }
 
+/** Always returns a UUID accepted by Postgres `uuid` columns. */
 export function newTagSetId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
   }
-  return `t_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+  const bytes = new Uint8Array(16);
+  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < 16; i++) bytes[i] = (Math.random() * 256) | 0;
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 export function buildTagSet(input: {
@@ -318,7 +328,17 @@ export async function saveGeneratedSet(record: TagSetRecord): Promise<void> {
     });
   } catch (err) {
     logWarn("tag set save failed", describeError(err));
-    throw err;
+    const msg = String((err as { message?: string })?.message || err);
+    if (/invalid input syntax for type uuid|22P02/i.test(msg)) {
+      throw new Error("保存IDが不正です。ページを再読み込みして再試行してください");
+    }
+    if (/Could not find the table|PGRST205/i.test(msg)) {
+      throw new Error("テーブル未作成です。設定の接続を確認してください");
+    }
+    if (/permission denied|42501|RLS/i.test(msg)) {
+      throw new Error("DBの権限がありません。しばらくして再試行してください");
+    }
+    throw err instanceof Error ? err : new Error(msg || "DB保存に失敗しました");
   }
 }
 

@@ -26,7 +26,14 @@ import {
   tagInBrowser,
   type LoadProgress,
 } from "./wdBrowser";
-import { forceUncensoredTags, forcedPrefixTags, setCustomDropTags, setCustomInsertTags, setInsertQualityEnabled } from "./forceUncensored";
+import {
+  forceUncensoredTags,
+  forcedPrefixTags,
+  normalizeTag,
+  setCustomDropTags,
+  setCustomInsertTags,
+  setInsertQualityEnabled,
+} from "./forceUncensored";
 import { ensureTagJaLoaded, isTagJaReady } from "./tagJa";
 import { SettingsPanel } from "./SettingsPanel";
 import { DropTagsDialog } from "./DropTagsDialog";
@@ -49,6 +56,7 @@ import {
   saveGeneratedSet,
   saveLastSession,
   setSupabaseAnonKeyProvider,
+  upsertDictEntry,
   type TagSetRecord,
 } from "./tagLibrary";
 import { TAG_LIBRARY_SCHEMA_SQL } from "./tagLibrarySchema";
@@ -252,6 +260,42 @@ export default function App() {
 
   const refreshCustomJa = () => {
     void loadCustomJaMap().then(setCustomJa);
+  };
+
+  const editTagJa = (tag: string, currentJa: string | null) => {
+    const next = window.prompt(
+      `「${tag}」の日本語訳（空で削除・辞書に保存）`,
+      currentJa ?? "",
+    );
+    if (next == null) return;
+    const customJaValue = next.trim();
+    void upsertDictEntry({
+      tag,
+      customJa: customJaValue,
+      category: "general",
+    })
+      .then(() => {
+        const key = normalizeTag(tag);
+        setCustomJa((prev) => {
+          const copy = { ...prev };
+          if (customJaValue) copy[key] = customJaValue;
+          else delete copy[key];
+          return copy;
+        });
+        setSnack(
+          customJaValue
+            ? `「${customJaValue}」を辞書に保存しました`
+            : "辞書の訳を削除しました",
+        );
+      })
+      .catch((err) => {
+        const raw = describeError(err).message;
+        setSnack(
+          typeof raw === "string" && raw
+            ? `辞書の保存に失敗: ${raw}`
+            : "辞書の保存に失敗しました",
+        );
+      });
   };
 
   useEffect(() => {
@@ -836,6 +880,7 @@ export default function App() {
           customJa={customJa}
           canUndo={undoStack.length > 0}
           onRemove={removeTag}
+          onEditJa={editTagJa}
           onUndo={undoRemoveTag}
           onCopy={() => void copyPrompt()}
           onClose={() => setShowTagsFs(false)}
@@ -1187,6 +1232,7 @@ export default function App() {
                     showJa={settings.showTagJa && tagJaReady}
                     customJa={customJa}
                     onRemove={removeTag}
+                    onEditJa={editTagJa}
                   />
                 </div>
               )}

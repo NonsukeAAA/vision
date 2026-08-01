@@ -13,6 +13,7 @@ type Props = {
   customJa: Record<string, string>;
   canUndo: boolean;
   onRemove: (tag: string) => void;
+  onEditJa?: (tag: string, currentJa: string | null) => void;
   onUndo: () => void;
   onCopy: () => void;
   onClose: () => void;
@@ -27,6 +28,7 @@ export function TagsFullscreenDialog({
   customJa,
   canUndo,
   onRemove,
+  onEditJa,
   onUndo,
   onCopy,
   onClose,
@@ -52,7 +54,7 @@ export function TagsFullscreenDialog({
       <div className="tags-fs-body">
         <div className="tags-fs-toolbar">
           <span className="muted">
-            {tags.length} tags · 2秒長押しで削除
+            {tags.length} tags · タップで訳編集 · 2秒長押しで削除
             {pressing ? ` · 「${pressing}」…` : ""}
           </span>
           <div className="tags-fs-actions">
@@ -84,6 +86,7 @@ export function TagsFullscreenDialog({
           showJa={showJa}
           customJa={customJa}
           onRemove={onRemove}
+          onEditJa={onEditJa}
           onPressingChange={setPressing}
         />
       </div>

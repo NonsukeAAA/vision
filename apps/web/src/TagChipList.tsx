@@ -1,5 +1,5 @@
-import { forcedPrefixTags } from "./forceUncensored";
-import { translateTag } from "./tagJa";
+import { forcedPrefixTags, normalizeTag } from "./forceUncensored";
+import { resolveTagJa } from "./tagJa";
 import type { TagScore } from "./types";
 import { useLongPress } from "./useLongPress";
 
@@ -10,6 +10,8 @@ type Props = {
   customJa?: Record<string, string>;
   /** Fires after a successful 2s long-press on a non-locked chip. */
   onRemove: (tag: string) => void;
+  /** Short tap: edit / save Japanese gloss into the dictionary. */
+  onEditJa?: (tag: string, currentJa: string | null) => void;
   onPressingChange?: (tag: string | null) => void;
   className?: string;
 };
@@ -21,6 +23,7 @@ function ChipButton({
   vote,
   ja,
   onRemove,
+  onEditJa,
   onPressingChange,
 }: {
   tag: string;
@@ -29,6 +32,7 @@ function ChipButton({
   vote?: number;
   ja: string | null;
   onRemove: (tag: string) => void;
+  onEditJa?: (tag: string, currentJa: string | null) => void;
   onPressingChange?: (tag: string | null) => void;
 }) {
   const handlers = useLongPress({
@@ -43,7 +47,7 @@ function ChipButton({
   return (
     <button
       type="button"
-      className={`tag-chip ${locked ? "tag-locked" : ""}`}
+      className={`tag-chip ${locked ? "tag-locked" : ""} ${ja ? "has-ja" : ""}`}
       {...handlers}
       onPointerDown={(e) => {
         if (!locked) onPressingChange?.(tag);
@@ -62,20 +66,28 @@ function ChipButton({
         onPressingChange?.(null);
         handlers.onPointerCancel();
       }}
+      onClick={() => {
+        if (!onEditJa) return;
+        onEditJa(tag, ja);
+      }}
       title={
         locked
           ? "設定の挿入タグから変更できます"
-          : vote && vote > 1
-            ? `${vote}モデルが一致 · 2秒長押しで削除`
-            : "2秒長押しで削除"
+          : onEditJa
+            ? "タップで日本語訳を編集 · 2秒長押しで削除"
+            : vote && vote > 1
+              ? `${vote}モデルが一致 · 2秒長押しで削除`
+              : "2秒長押しで削除"
       }
       aria-label={
-        locked ? `${tag}（固定）` : `${tag}（2秒長押しで削除）`
+        locked
+          ? `${ja || tag}（固定）`
+          : `${ja || tag}（タップで訳を編集、2秒長押しで削除）`
       }
     >
       <span className="tag-chip-main">
-        <span className="tag-en">{tag}</span>
         {ja ? <span className="tag-ja">{ja}</span> : null}
+        <span className="tag-en">{tag}</span>
       </span>
       {vote && vote > 1 ? <span className="vote">×{vote}</span> : null}
       <span className="score">{score.toFixed(2)}</span>
@@ -89,6 +101,7 @@ export function TagChipList({
   showJa = false,
   customJa = {},
   onRemove,
+  onEditJa,
   onPressingChange,
   className = "chip-wrap",
 }: Props) {
@@ -97,11 +110,9 @@ export function TagChipList({
   return (
     <div className={className}>
       {tags.map((t) => {
-        const key = t.tag.trim().toLowerCase().replaceAll("_", " ");
+        const key = normalizeTag(t.tag);
         const locked = lockedSet.has(key);
-        const ja = showJa
-          ? customJa[key] || customJa[t.tag] || translateTag(t.tag)
-          : null;
+        const ja = showJa ? resolveTagJa(t.tag, customJa) : null;
         return (
           <ChipButton
             key={t.tag}
@@ -111,6 +122,7 @@ export function TagChipList({
             vote={votes[t.tag]}
             ja={ja}
             onRemove={onRemove}
+            onEditJa={onEditJa}
             onPressingChange={onPressingChange}
           />
         );
