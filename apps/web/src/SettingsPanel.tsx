@@ -831,17 +831,17 @@ export function SettingsPanel({
             type="password"
             autoComplete="off"
             spellCheck={false}
-            placeholder="sb_secret_… または anon"
+            placeholder="sb_secret_… / service_role JWT / anon"
             value={settings.supabaseAnonKey}
             onChange={(e) => patch({ supabaseAnonKey: e.target.value.trim() })}
           />
         </label>
         <p className="settings-help">
-          Dashboard → Project Settings → API Keys の{" "}
-          <strong>secret</strong>（<code>sb_secret_…</code>
-          ）を推奨。この端末の localStorage
-          にだけ保存し、リポジトリには入れません。URL:{" "}
-          <code>{SUPABASE_URL}</code>
+          Dashboard → Project Settings → API の{" "}
+          <strong>service_role</strong> または{" "}
+          <code>sb_secret_…</code>
+          。この端末の localStorage にだけ保存します（公開リポジトリや Pages
+          ビルドには入れないでください）。URL: <code>{SUPABASE_URL}</code>
         </p>
         <p className="settings-help">
           同期:{" "}
