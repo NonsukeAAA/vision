@@ -12,12 +12,14 @@ import {
   listDictionary,
   listFavorites,
   listHistory,
+  listReferencedSetIds,
   probeTagLibraryError,
   removeFavorite,
   upsertDictEntry,
   type DictEntry,
   type TagSetRecord,
 } from "./tagLibrary";
+import { pruneSetImages } from "./lastImage";
 import { translateTag } from "./tagJa";
 
 type Tab = "history" | "favorites" | "dictionary";
@@ -29,6 +31,11 @@ type Props = {
   onNotify?: (message: string) => void;
   /** Refresh custom JA map in the parent after dictionary edits. */
   onDictChanged?: () => void;
+  /**
+   * When starring from the library, prefer the parent's current edit
+   * snapshot (deleted tags stay deleted) for the active set.
+   */
+  resolveFavoriteRecord?: (record: TagSetRecord) => TagSetRecord;
 };
 
 function formatWhen(ts: number): string {
@@ -50,6 +57,7 @@ export function TagLibraryDialog({
   onLoadSet,
   onNotify,
   onDictChanged,
+  resolveFavoriteRecord,
 }: Props) {
   const [tab, setTab] = useState<Tab>("history");
   const [history, setHistory] = useState<TagSetRecord[]>([]);
@@ -110,8 +118,9 @@ export function TagLibraryDialog({
         await removeFavorite(record.id);
         onNotify?.("お気に入りを解除しました");
       } else {
-        await addFavorite(record);
-        onNotify?.("お気に入りに追加しました");
+        const snapshot = resolveFavoriteRecord?.(record) ?? record;
+        await addFavorite(snapshot);
+        onNotify?.("編集中のタグをお気に入りに保存しました");
       }
       await reload();
     } catch {
@@ -251,7 +260,10 @@ export function TagLibraryDialog({
                     className="btn-text"
                     disabled={busy}
                     onClick={() =>
-                      void deleteHistory(row.id).then(() => reload())
+                      void deleteHistory(row.id)
+                        .then(() => listReferencedSetIds())
+                        .then((keep) => pruneSetImages(keep))
+                        .then(() => reload())
                     }
                   >
                     削除
@@ -325,7 +337,10 @@ export function TagLibraryDialog({
         {tab === "history" &&
           renderSetList(history, "まだ履歴がありません。画像を解析すると直近100件まで残ります。")}
         {tab === "favorites" &&
-          renderSetList(favorites, "お気に入りはまだありません。履歴の☆から追加できます。")}
+          renderSetList(
+            favorites,
+            "お気に入りはまだありません。結果画面の☆で編集中のタグを保存できます。",
+          )}
 
         {tab === "dictionary" && (
           <div className="tag-lib-dict">

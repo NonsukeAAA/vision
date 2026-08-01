@@ -245,7 +245,8 @@ async function upsertSet(record: TagSetRecord, kind: SetKind): Promise<void> {
   if (error) throw error;
 }
 
-async function trimHistory(): Promise<void> {
+/** Returns ids removed from history (may still exist as favorite/session). */
+async function trimHistory(): Promise<string[]> {
   const sb = requireClient();
   const { data, error } = await sb
     .from("vision_tag_sets")
@@ -254,16 +255,28 @@ async function trimHistory(): Promise<void> {
     .order("created_at", { ascending: false });
   if (error) throw error;
   const extra = (data ?? []).slice(HISTORY_LIMIT);
-  if (extra.length === 0) return;
+  if (extra.length === 0) return [];
+  const ids = extra.map((r) => r.id);
   const { error: delErr } = await sb
     .from("vision_tag_sets")
     .delete()
     .eq("kind", "history")
-    .in(
-      "id",
-      extra.map((r) => r.id),
-    );
+    .in("id", ids);
   if (delErr) throw delErr;
+  return ids;
+}
+
+/** Ids still referenced by any kind — used to prune local set images. */
+export async function listReferencedSetIds(): Promise<string[]> {
+  try {
+    const sb = requireClient();
+    const { data, error } = await sb.from("vision_tag_sets").select("id");
+    if (error) throw error;
+    return [...new Set((data ?? []).map((r) => r.id as string))];
+  } catch (err) {
+    logWarn("list referenced set ids failed", describeError(err));
+    return [];
+  }
 }
 
 async function bumpDictionary(tags: TagScore[]): Promise<void> {
@@ -416,8 +429,24 @@ export async function isFavorite(id: string): Promise<boolean> {
   }
 }
 
+/**
+ * Upsert a favorite from the current edited tag snapshot.
+ * Deleted tags are omitted — only the tags still on screen are stored.
+ */
 export async function addFavorite(record: TagSetRecord): Promise<void> {
-  const next = { ...record, updatedAt: Date.now() };
+  const next: TagSetRecord = {
+    ...record,
+    tags: record.tags.map((t) => ({ ...t })),
+    votes: { ...record.votes },
+    updatedAt: Date.now(),
+    label:
+      record.tags
+        .slice(0, 6)
+        .map((t) => t.tag)
+        .join(", ") ||
+      record.label ||
+      "タグセット",
+  };
   await upsertSet(next, "favorite");
 }
 

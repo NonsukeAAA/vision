@@ -43,12 +43,20 @@ import { TagChipList } from "./TagChipList";
 import { TagLibraryDialog } from "./TagLibraryDialog";
 import { TagsFullscreenDialog } from "./TagsFullscreenDialog";
 import { CropImageDialog } from "./CropImageDialog";
-import { clearLastImage, loadLastImage, saveLastImage } from "./lastImage";
+import {
+  clearLastImage,
+  loadLastImage,
+  loadSetImage,
+  pruneSetImages,
+  saveLastImage,
+  saveSetImage,
+} from "./lastImage";
 import {
   addFavorite,
   buildTagSet,
   importFromStorageIfEmpty,
   isFavorite,
+  listReferencedSetIds,
   loadCustomJaMap,
   loadLastSession,
   probeTagLibraryError,
@@ -124,10 +132,14 @@ export default function App() {
   const promptRefValue = useRef(prompt);
   const resultRefValue = useRef(result);
   const tagVotesRef = useRef(tagVotes);
+  const favoritedRef = useRef(favorited);
+  const previewUrlRef = useRef(previewUrl);
   editableTagsRef.current = editableTags;
   promptRefValue.current = prompt;
   resultRefValue.current = result;
   tagVotesRef.current = tagVotes;
+  favoritedRef.current = favorited;
+  previewUrlRef.current = previewUrl;
   const showingResult = screen === "result" && !!result;
   const activeModel = BROWSER_MODELS[settings.browserModel];
   const runModels =
@@ -366,15 +378,48 @@ export default function App() {
     return record;
   };
 
+  const showSetImage = (next: File | null) => {
+    const prev = previewUrlRef.current;
+    if (prev) URL.revokeObjectURL(prev);
+    setFile(next);
+    setPreviewUrl(next ? URL.createObjectURL(next) : null);
+    if (next) {
+      void saveLastImage(next).catch((err) =>
+        logWarn("saveLastImage failed", describeError(err)),
+      );
+    } else {
+      void clearLastImage().catch((err) =>
+        logWarn("clearLastImage failed", describeError(err)),
+      );
+    }
+  };
+
+  const persistSetImage = (id: string, image: File | null | undefined) => {
+    if (!id || !image) return;
+    void saveSetImage(id, image).catch((err) =>
+      logWarn("saveSetImage failed", describeError(err)),
+    );
+  };
+
   const scheduleSessionSave = (tags: TagScore[], nextPrompt: string) => {
     if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current);
     persistTimerRef.current = window.setTimeout(() => {
+      // Persist the on-screen edit (deleted tags stay gone).
       const record = snapshotCurrentSet(tags, nextPrompt);
       void saveLastSession(record);
+      persistSetImage(record.id, fileRef.current);
+      if (favoritedRef.current) {
+        void addFavorite(record).catch((err) =>
+          logWarn("favorite sync failed", describeError(err)),
+        );
+      }
     }, 400);
   };
 
-  const applyTagSet = (record: TagSetRecord) => {
+  const applyTagSet = (
+    record: TagSetRecord,
+    opts?: { keepImageIfMissing?: boolean },
+  ) => {
     sessionIdRef.current = record.id;
     sessionCreatedAtRef.current = record.createdAt;
     const tags = forceUncensoredTags(record.tags);
@@ -406,6 +451,23 @@ export default function App() {
       prompt: nextPrompt,
       updatedAt: Date.now(),
     });
+    void (async () => {
+      const image = await loadSetImage(record.id);
+      if (image) {
+        showSetImage(image);
+        return;
+      }
+      if (opts?.keepImageIfMissing) {
+        // Startup restore: keep lastImage and attach it to this set for later.
+        if (fileRef.current) persistSetImage(record.id, fileRef.current);
+        return;
+      }
+      // Older history rows have no stored blob — avoid showing the wrong picture.
+      if (fileRef.current) {
+        showSetImage(null);
+        setSnack("この履歴の画像は未保存です（今後の解析分から復元できます）");
+      }
+    })();
   };
 
   const refreshLibraryStatus = async (): Promise<boolean> => {
@@ -441,7 +503,7 @@ export default function App() {
       const session = ready ? await loadLastSession() : null;
       if (cancelled) return;
       if (session?.tags?.length) {
-        applyTagSet(session);
+        applyTagSet(session, { keepImageIfMissing: true });
         setSnack(
           restoredImage
             ? "Supabase のタグと前回の画像を復元しました"
@@ -640,11 +702,14 @@ export default function App() {
         votes: nextVotes,
         sourceNote: next.source?.note ?? "",
       });
+      persistSetImage(record.id, fileRef.current);
       void saveGeneratedSet(record)
-        .then(() => {
+        .then(async () => {
           void isFavorite(record.id).then(setFavorited);
           refreshCustomJa();
           void refreshLibraryStatus();
+          const keep = await listReferencedSetIds();
+          void pruneSetImages(keep);
         })
         .catch((err) => {
           const raw = describeError(err).message;
@@ -730,16 +795,24 @@ export default function App() {
       setSnack("先にタグを生成してください");
       return;
     }
-    const record = snapshotCurrentSet(editableTags, prompt);
+    // Favorite the current edit surface — deleted chips stay deleted.
+    const tags = forceUncensoredTags(editableTags);
+    const nextPrompt = rebuildPrompt(
+      tags,
+      result?.caption ?? null,
+      result?.mode ?? settings.mode,
+    );
+    const record = snapshotCurrentSet(tags, nextPrompt);
     try {
       if (favorited) {
         await removeFavorite(record.id);
         setFavorited(false);
         setSnack("お気に入りを解除しました");
       } else {
+        persistSetImage(record.id, fileRef.current);
         await addFavorite(record);
         setFavorited(true);
-        setSnack("お気に入りに追加しました");
+        setSnack("編集中のタグをお気に入りに保存しました");
       }
     } catch {
       setSnack("お気に入りの更新に失敗しました");
@@ -868,6 +941,21 @@ export default function App() {
           open={showLibrary}
           onClose={() => setShowLibrary(false)}
           onLoadSet={applyTagSet}
+          resolveFavoriteRecord={(record) => {
+            if (
+              record.id !== sessionIdRef.current ||
+              editableTagsRef.current.length === 0
+            ) {
+              return record;
+            }
+            const tags = forceUncensoredTags(editableTagsRef.current);
+            const nextPrompt = rebuildPrompt(
+              tags,
+              resultRefValue.current?.caption ?? record.caption,
+              resultRefValue.current?.mode ?? record.mode ?? settings.mode,
+            );
+            return snapshotCurrentSet(tags, nextPrompt);
+          }}
           onNotify={setSnack}
           onDictChanged={refreshCustomJa}
         />

@@ -1,17 +1,15 @@
 /**
- * Remembers the picked image so a reload — or a tab that iOS killed — does not
- * force the user to pick the same file again.
- *
- * IndexedDB rather than sessionStorage: it stores a Blob directly and survives the
- * reload prompt mobile Safari shows after dropping a tab.
+ * Remembers picked images in IndexedDB so reload / iOS tab kill does not
+ * force the user to re-pick. Also stores one blob per tag-set id so history
+ * and favorites can restore the matching picture.
  */
 
 import { describeError, logInfo, logWarn } from "./diagnostics";
 
 const DB_NAME = "vision-last-image";
 const STORE = "image";
-const KEY = "current";
-const DB_VERSION = 1;
+const CURRENT_KEY = "current";
+const DB_VERSION = 2;
 
 type StoredImage = {
   blob: Blob;
@@ -81,15 +79,25 @@ async function withStore<T>(
   }
 }
 
+function toStored(file: File): StoredImage {
+  return {
+    blob: file.slice(0, file.size, file.type),
+    name: file.name,
+    type: file.type || "image/jpeg",
+    savedAt: Date.now(),
+  };
+}
+
+function toFile(record: StoredImage | undefined): File | null {
+  if (!record?.blob) return null;
+  return new File([record.blob], record.name || "image.jpg", {
+    type: record.type || record.blob.type || "image/jpeg",
+  });
+}
+
 export async function saveLastImage(file: File): Promise<void> {
   try {
-    const record: StoredImage = {
-      blob: file.slice(0, file.size, file.type),
-      name: file.name,
-      type: file.type || "image/jpeg",
-      savedAt: Date.now(),
-    };
-    await withStore("readwrite", (store) => store.put(record, KEY));
+    await withStore("readwrite", (store) => store.put(toStored(file), CURRENT_KEY));
     logInfo("last image saved", { mb: Math.round((file.size / 1e6) * 10) / 10 });
   } catch (err) {
     // Private browsing and storage pressure land here; the app works without it.
@@ -101,12 +109,9 @@ export async function loadLastImage(): Promise<File | null> {
   try {
     const record = await withStore<StoredImage | undefined>(
       "readonly",
-      (store) => store.get(KEY),
+      (store) => store.get(CURRENT_KEY),
     );
-    if (!record?.blob) return null;
-    return new File([record.blob], record.name || "image.jpg", {
-      type: record.type || record.blob.type || "image/jpeg",
-    });
+    return toFile(record);
   } catch (err) {
     logWarn("last image restore failed", describeError(err));
     return null;
@@ -115,8 +120,82 @@ export async function loadLastImage(): Promise<File | null> {
 
 export async function clearLastImage(): Promise<void> {
   try {
-    await withStore("readwrite", (store) => store.delete(KEY));
+    await withStore("readwrite", (store) => store.delete(CURRENT_KEY));
   } catch (err) {
     logWarn("last image clear failed", describeError(err));
+  }
+}
+
+/** Persist the image for a history / favorite / session tag-set id. */
+export async function saveSetImage(id: string, file: File): Promise<void> {
+  if (!id) return;
+  try {
+    await withStore("readwrite", (store) => store.put(toStored(file), id));
+    logInfo("set image saved", {
+      id: id.slice(0, 8),
+      mb: Math.round((file.size / 1e6) * 10) / 10,
+    });
+  } catch (err) {
+    logWarn("set image save failed", describeError(err));
+  }
+}
+
+export async function loadSetImage(id: string): Promise<File | null> {
+  if (!id) return null;
+  try {
+    const record = await withStore<StoredImage | undefined>(
+      "readonly",
+      (store) => store.get(id),
+    );
+    return toFile(record);
+  } catch (err) {
+    logWarn("set image load failed", describeError(err));
+    return null;
+  }
+}
+
+export async function deleteSetImage(id: string): Promise<void> {
+  if (!id || id === CURRENT_KEY) return;
+  try {
+    await withStore("readwrite", (store) => store.delete(id));
+  } catch (err) {
+    logWarn("set image delete failed", describeError(err));
+  }
+}
+
+/** Drop set images whose ids are no longer referenced. Keeps "current". */
+export async function pruneSetImages(keepIds: Iterable<string>): Promise<void> {
+  const keep = new Set(keepIds);
+  keep.add(CURRENT_KEY);
+  try {
+    const db = await withTimeout(openDb(), 5000, "IndexedDB open");
+    try {
+      await withTimeout(
+        new Promise<void>((resolve, reject) => {
+          const tx = db.transaction(STORE, "readwrite");
+          const store = tx.objectStore(STORE);
+          const req = store.getAllKeys();
+          req.onsuccess = () => {
+            const keys = (req.result ?? []) as IDBValidKey[];
+            for (const key of keys) {
+              if (typeof key === "string" && !keep.has(key)) {
+                store.delete(key);
+              }
+            }
+          };
+          req.onerror = () =>
+            reject(req.error ?? new Error("IndexedDB getAllKeys failed"));
+          tx.oncomplete = () => resolve();
+          tx.onabort = () =>
+            reject(tx.error ?? new Error("IndexedDB prune aborted"));
+        }),
+        8000,
+        "IndexedDB prune",
+      );
+    } finally {
+      db.close();
+    }
+  } catch (err) {
+    logWarn("set image prune failed", describeError(err));
   }
 }
