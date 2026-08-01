@@ -1036,7 +1036,15 @@ export default function App() {
                   <button
                     type="button"
                     className="btn-text"
-                    onClick={() => setShowCrop(true)}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (!file) {
+                        setSnack("先に画像を選択してください");
+                        return;
+                      }
+                      setShowCrop(true);
+                    }}
                   >
                     クロップ
                   </button>
