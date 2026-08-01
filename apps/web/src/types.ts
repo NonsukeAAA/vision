@@ -69,8 +69,8 @@ export type AppSettings = {
   /** Show Japanese gloss under each result tag chip. */
   showTagJa: boolean;
   /**
-   * Supabase API key for tag-library sync (sb_secret_… or anon/publishable).
-   * Stored only in this browser; never committed. Prefer secret for Storage sync.
+   * Supabase service_role (or sb_secret) for tag-library tables.
+   * Stored only in this browser; never committed / never baked into Pages.
    */
   supabaseAnonKey: string;
 };

@@ -49,10 +49,8 @@ import {
   SUPABASE_URL,
   type SyncStatus,
 } from "./supabaseClient";
-import {
-  syncLibraryFromRemote,
-  syncLibraryToRemote,
-} from "./tagLibrary";
+import { isTagLibraryReady } from "./tagLibrary";
+import { TAG_LIBRARY_SCHEMA_SQL } from "./tagLibrarySchema";
 
 type Props = {
   open: boolean;
@@ -822,29 +820,30 @@ export function SettingsPanel({
           </M3eButton>
         </div>
         <p className="settings-help">
-          履歴・お気に入り・辞書は端末内 IndexedDB にキャッシュし、Supabase
-          Storage（{SUPABASE_PROJECT_REF}）へ同期して永続化します。
+          履歴・お気に入り・辞書・前回セッションはすべて Supabase のテーブル（
+          <code>vision_tag_sets</code> / <code>vision_tag_dictionary</code>
+          ）で管理します。端末への同期キャッシュはありません。
         </p>
         <label className="settings-field">
-          <span>Supabase API Key</span>
+          <span>Supabase service_role</span>
           <input
             type="password"
             autoComplete="off"
             spellCheck={false}
-            placeholder="sb_secret_… / service_role JWT / anon"
+            placeholder="eyJ…（service_role）または sb_secret_…"
             value={settings.supabaseAnonKey}
             onChange={(e) => patch({ supabaseAnonKey: e.target.value.trim() })}
           />
         </label>
         <p className="settings-help">
-          Dashboard → Project Settings → API の{" "}
-          <strong>service_role</strong> または{" "}
-          <code>sb_secret_…</code>
-          。この端末の localStorage にだけ保存します（公開リポジトリや Pages
-          ビルドには入れないでください）。URL: <code>{SUPABASE_URL}</code>
+          Dashboard → Project Settings → API →{" "}
+          <strong>service_role</strong>
+          。この端末の localStorage のみ（Pages
+          ビルドや Git には入れない）。プロジェクト:{" "}
+          <code>{SUPABASE_PROJECT_REF}</code> · <code>{SUPABASE_URL}</code>
         </p>
         <p className="settings-help">
-          同期:{" "}
+          状態:{" "}
           {syncStatus
             ? syncStatus.detail
             : "確認中…"}
@@ -855,23 +854,14 @@ export function SettingsPanel({
             variant="tonal"
             disabled={syncBusy}
             onClick={() => {
-              setSyncBusy(true);
-              void (async () => {
-                const ok = await syncLibraryFromRemote();
-                setSyncStatus(
-                  await probeSupabaseSync(settings.supabaseAnonKey),
-                );
-                onSnack(
-                  ok
-                    ? "Supabase から取り込みました"
-                    : "取り込みに失敗（キー / Anonymous を確認）",
-                );
-                setSyncBusy(false);
-              })();
+              void navigator.clipboard.writeText(TAG_LIBRARY_SCHEMA_SQL).then(
+                () => onSnack("スキーマ SQL をコピーしました。SQL Editor で実行してください"),
+                () => onSnack("コピーに失敗しました"),
+              );
             }}
           >
-            <M3eIcon slot="icon" name="cloud_download" />
-            取得
+            <M3eIcon slot="icon" name="content_copy" />
+            SQLをコピー
           </M3eButton>
           <M3eButton
             type="button"
@@ -880,22 +870,30 @@ export function SettingsPanel({
             onClick={() => {
               setSyncBusy(true);
               void (async () => {
-                const ok = await syncLibraryToRemote();
                 setSyncStatus(
                   await probeSupabaseSync(settings.supabaseAnonKey),
                 );
+                const ok = await isTagLibraryReady();
                 onSnack(
                   ok
-                    ? "Supabase へアップロードしました"
-                    : "アップロードに失敗（キー / Anonymous を確認）",
+                    ? "Supabase テーブルに接続できました"
+                    : "未接続（キーまたは SQL 実行を確認）",
                 );
                 setSyncBusy(false);
               })();
             }}
           >
-            <M3eIcon slot="icon" name="cloud_upload" />
-            送信
+            <M3eIcon slot="icon" name="refresh" />
+            再確認
           </M3eButton>
+          <a
+            className="btn-text"
+            href={`https://supabase.com/dashboard/project/${SUPABASE_PROJECT_REF}/sql/new`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            SQL Editorを開く
+          </a>
         </div>
       </div>
 

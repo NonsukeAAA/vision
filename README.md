@@ -11,20 +11,20 @@
   - [JoyCaption Beta One](https://huggingface.co/fancyfeast/llama-joycaption-beta-one-hf-llava) — 情景・表情に強い詳細キャプション（ローカル API）
   - [WD EVA02-Large Tagger v3](https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3) — Danbooru タグ（ブラウザ ONNX / ローカル API）
 
-## Supabase（タグライブラリ永続化）
+## Supabase（タグライブラリ — DB 管理）
 
-履歴・お気に入り・辞書・前回セッションは端末の IndexedDB にキャッシュし、[Supabase Storage](https://supabase.com)（プロジェクト `nmdlasnxevejggwmnjwm` のプライベートバケット `vision-library`）へ JSON 同期します。SQL マイグレーションや Anonymous Auth は不要です。
+履歴・お気に入り・辞書・前回セッションは **すべて Supabase Postgres** のテーブルで管理します（端末キャッシュなし）。
 
-1. Dashboard → **Project Settings → API Keys** で **secret**（`sb_secret_…`）をコピー
-2. アプリ設定 → タグライブラリ に貼り付け（この端末だけに保存）
-3. 以降は生成・編集のたびに自動同期。手動は **送信 / 取得**
+| テーブル | 内容 |
+| --- | --- |
+| `vision_tag_sets` | history / favorite / session |
+| `vision_tag_dictionary` | 生成タグ辞書（訳・メモ） |
 
-任意で CLI 用 Personal Access Token（`sbp_…`）がある場合:
+1. Dashboard → **SQL Editor** でスキーマを実行（アプリ設定の「SQLをコピー」、または `apps/web/src/tagLibrarySchema.sql`）
+2. **Project Settings → API → service_role** をアプリ設定に貼る（この端末だけ）
+3. Table Editor でデータを直接確認・編集できます
 
-```bash
-export SUPABASE_ACCESS_TOKEN=sbp_…
-./scripts/supabase-link.sh
-```
+`service_role` は強力なので Git / Pages ビルドには入れないでください。
 
 ## GitHub Pages デプロイ
 

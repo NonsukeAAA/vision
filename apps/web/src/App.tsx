@@ -49,10 +49,10 @@ import {
   removeFavorite,
   saveGeneratedSet,
   saveLastSession,
+  setSupabaseAnonKeyProvider,
   syncLibraryFromRemote,
   type TagSetRecord,
 } from "./tagLibrary";
-import { setSupabaseAnonKeyProvider } from "./tagLibrarySync";
 import {
   describeError,
   getPreviousSessionReport,
@@ -356,8 +356,7 @@ export default function App() {
     });
   };
 
-  // Bring the previous image + last tags back on load (survives tab kills).
-  // Prefer Supabase when configured, then fall back to IndexedDB.
+  // Restore last image (local) + last tags from Supabase tables.
   useEffect(() => {
     let cancelled = false;
     setSupabaseAnonKeyProvider(() => loadSettings().supabaseAnonKey);
@@ -368,26 +367,24 @@ export default function App() {
         setFile(restoredImage);
         setPreviewUrl(URL.createObjectURL(restoredImage));
       }
-      const pulled = await syncLibraryFromRemote();
+      const ready = await syncLibraryFromRemote();
       if (cancelled) return;
-      if (pulled) refreshCustomJa();
-      const session = await loadLastSession();
+      if (ready) refreshCustomJa();
+      const session = ready ? await loadLastSession() : null;
       if (cancelled) return;
       if (session?.tags?.length) {
         applyTagSet(session);
         setSnack(
-          pulled
-            ? restoredImage
-              ? "Supabase と前回の画像を復元しました"
-              : "Supabase からタグを復元しました"
-            : restoredImage
-              ? "前回の画像とタグを復元しました"
-              : "前回のタグを復元しました",
+          restoredImage
+            ? "Supabase のタグと前回の画像を復元しました"
+            : "Supabase から前回のタグを復元しました",
         );
       } else if (restoredImage) {
-        setSnack("前回の画像を復元しました");
-      } else if (pulled) {
-        setSnack("Supabase と同期しました");
+        setSnack(
+          ready
+            ? "前回の画像を復元しました"
+            : "前回の画像を復元（タグDB未接続）",
+        );
       }
     })();
     return () => {

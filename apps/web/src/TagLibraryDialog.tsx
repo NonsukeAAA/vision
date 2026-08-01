@@ -279,8 +279,9 @@ export function TagLibraryDialog({
 
       <div className="tag-lib-body">
         <p className="settings-help">
-          端末内 IndexedDB にキャッシュし、設定した Supabase
-          へ同期します。バックアップ JSON でも移せます。
+          データはすべて Supabase（vision_tag_sets /
+          vision_tag_dictionary）に保存されています。バックアップ JSON
+          のエクスポート／インポートもできます。
         </p>
 
         <div className="tag-lib-tabs" role="tablist">
