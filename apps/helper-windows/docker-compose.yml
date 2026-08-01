@@ -1,0 +1,32 @@
+services:
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+      args:
+        ENABLE_JOY: "1"
+    ports:
+      - "8000:8000"
+    environment:
+      VISION_HOST: "0.0.0.0"
+      VISION_PORT: "8000"
+      VISION_MOCK_INFERENCE: "0"
+      VISION_ENABLE_JOY: "${VISION_ENABLE_JOY:-1}"
+      VISION_JOY_REPO: "${VISION_JOY_REPO:-fancyfeast/llama-joycaption-beta-one-hf-llava}"
+      VISION_CORS_ORIGINS: "*"
+      VISION_DEVICE: "${VISION_DEVICE:-auto}"
+    volumes:
+      - vision-models:/root/.cache/huggingface
+      - vision-models-local:/root/.cache/vision/models
+    # Uncomment for NVIDIA GPU:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+volumes:
+  vision-models:
+  vision-models-local:

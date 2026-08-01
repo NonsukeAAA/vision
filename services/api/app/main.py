@@ -9,6 +9,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 
 from .config import Settings, get_settings
+from .force_uncensored import (
+    force_uncensored_caption,
+    force_uncensored_tags,
+)
 from .joy_caption import JoyCaptioner
 from .schemas import HealthResponse, OutputMode, TagResponse, TagScore
 from .wd_tagger import WdTagger, tags_to_prompt
@@ -126,6 +130,7 @@ async def tag_image(
 
     if output_mode == OutputMode.booru:
         if tags:
+            tags = force_uncensored_tags(tags)
             prompt = tags_to_prompt(tags)
         else:
             prompt = caption or ""
@@ -136,14 +141,22 @@ async def tag_image(
                     for part in caption.split(",")
                     if part.strip()
                 ]
+                tags = force_uncensored_tags(tags)
+                prompt = tags_to_prompt(tags)
+            else:
+                prompt = force_uncensored_caption(prompt) or "uncensored"
     elif output_mode == OutputMode.caption:
-        prompt = caption or ""
+        caption = force_uncensored_caption(caption)
+        prompt = caption or "uncensored"
     else:
+        if tags:
+            tags = force_uncensored_tags(tags)
+        caption = force_uncensored_caption(caption)
         tag_part = tags_to_prompt(tags)
         if caption and tag_part:
             prompt = f"{caption}\n\n{tag_part}"
         else:
-            prompt = caption or tag_part
+            prompt = caption or tag_part or "uncensored"
 
     return TagResponse(
         mode=output_mode,

@@ -1,0 +1,138 @@
+from __future__ import annotations
+
+from app.force_uncensored import (
+    force_uncensored_caption,
+    force_uncensored_prompt,
+    force_uncensored_tags,
+    is_censor_related_tag,
+    is_layout_noise_tag,
+    is_mono_comic_style_tag,
+)
+from app.schemas import TagScore
+
+
+def test_strips_mosaic_and_censor_tags() -> None:
+    tags = [
+        TagScore(tag="1girl", score=0.9, category="general"),
+        TagScore(tag="mosaic censoring", score=0.8, category="general"),
+        TagScore(tag="bar censor", score=0.7, category="general"),
+        TagScore(tag="censored", score=0.6, category="general"),
+        TagScore(tag="smile", score=0.5, category="general"),
+    ]
+    out = force_uncensored_tags(tags)
+    names = [t.tag for t in out]
+    assert names[0] == "uncensored"
+    assert "mosaic censoring" not in names
+    assert "bar censor" not in names
+    assert "censored" not in names
+    assert "1girl" in names
+    assert "smile" in names
+
+
+def test_strips_mono_comic_tags() -> None:
+    tags = [
+        TagScore(tag="1girl", score=0.9, category="general"),
+        TagScore(tag="monochrome", score=0.8, category="general"),
+        TagScore(tag="comic", score=0.7, category="general"),
+        TagScore(tag="grayscale", score=0.6, category="general"),
+        TagScore(tag="speech_bubble", score=0.5, category="general"),
+        TagScore(tag="4koma", score=0.4, category="general"),
+        TagScore(tag="smile", score=0.3, category="general"),
+    ]
+    out = force_uncensored_tags(tags)
+    names = [t.tag for t in out]
+    assert names[0] == "uncensored"
+    assert "monochrome" not in names
+    assert "comic" not in names
+    assert "grayscale" not in names
+    assert "speech bubble" not in names
+    assert "4koma" not in names
+    assert "1girl" in names
+    assert "smile" in names
+
+
+def test_keeps_uncensored_only_once() -> None:
+    tags = [
+        TagScore(tag="uncensored", score=0.4, category="general"),
+        TagScore(tag="1girl", score=0.9, category="general"),
+    ]
+    out = force_uncensored_tags(tags)
+    assert [t.tag for t in out].count("uncensored") == 1
+    assert out[0].tag == "uncensored"
+    assert out[0].score == 1.0
+
+
+def test_inserts_quality_tags() -> None:
+    tags = [
+        TagScore(tag="1girl", score=0.9, category="general"),
+        TagScore(tag="masterpiece", score=0.2, category="general"),
+        TagScore(tag="smile", score=0.5, category="general"),
+    ]
+    names = [t.tag for t in force_uncensored_tags(tags)]
+    assert names[:5] == [
+        "uncensored",
+        "masterpiece",
+        "best quality",
+        "absurdres",
+        "highres",
+    ]
+    assert names.count("masterpiece") == 1
+    assert "1girl" in names
+    assert "smile" in names
+
+
+def test_is_censor_related() -> None:
+    assert is_censor_related_tag("bar_censor")
+    assert is_censor_related_tag("mosaic")
+    assert not is_censor_related_tag("uncensored")
+    assert not is_censor_related_tag("1girl")
+
+
+def test_is_mono_comic() -> None:
+    assert is_mono_comic_style_tag("monochrome")
+    assert is_mono_comic_style_tag("greyscale")
+    assert is_mono_comic_style_tag("comic")
+    assert is_mono_comic_style_tag("speech_bubble")
+    assert not is_mono_comic_style_tag("1girl")
+
+
+def test_strips_layout_noise_tags() -> None:
+    tags = [
+        TagScore(tag="1girl", score=0.9, category="general"),
+        TagScore(tag="v", score=0.8, category="general"),
+        TagScore(tag="multiple_views", score=0.7, category="general"),
+        TagScore(tag="v-neck", score=0.6, category="general"),
+        TagScore(tag="smile", score=0.5, category="general"),
+    ]
+    names = [t.tag for t in force_uncensored_tags(tags)]
+    assert "v" not in names
+    assert "multiple_views" not in names
+    # only the bare pose tag goes — compounds that describe the picture stay
+    assert "v-neck" in names
+    assert "1girl" in names
+    assert "smile" in names
+
+
+def test_is_layout_noise() -> None:
+    assert is_layout_noise_tag("v")
+    assert is_layout_noise_tag("multiple_views")
+    assert is_layout_noise_tag("Double V")
+    assert not is_layout_noise_tag("v-neck")
+    assert not is_layout_noise_tag("victory pose")
+
+
+def test_force_prompt() -> None:
+    assert (
+        force_uncensored_prompt("1girl, censored, monochrome, smile")
+        == "uncensored, masterpiece, best quality, absurdres, highres, 1girl, smile"
+    )
+
+
+def test_force_caption() -> None:
+    text = force_uncensored_caption(
+        "A monochrome comic scene with mosaic and bar censor details."
+    )
+    assert text is not None
+    assert "mosaic" not in text.lower()
+    assert "monochrome" not in text.lower()
+    assert "uncensored" in text.lower()
