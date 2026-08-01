@@ -1,0 +1,12 @@
+[
+  {
+    "id": "beta-one",
+    "repo": "fancyfeast/llama-joycaption-beta-one-hf-llava",
+    "label": "JoyCaption Beta One (recommended)"
+  },
+  {
+    "id": "alpha-two",
+    "repo": "fancyfeast/llama-joycaption-alpha-two-hf-llava",
+    "label": "JoyCaption Alpha Two"
+  }
+]
