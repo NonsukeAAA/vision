@@ -823,24 +823,25 @@ export function SettingsPanel({
         </div>
         <p className="settings-help">
           履歴・お気に入り・辞書は端末内 IndexedDB にキャッシュし、Supabase
-          （{SUPABASE_PROJECT_REF}）へ同期して永続化します。
+          Storage（{SUPABASE_PROJECT_REF}）へ同期して永続化します。
         </p>
         <label className="settings-field">
-          <span>Supabase Anon Key</span>
+          <span>Supabase API Key</span>
           <input
             type="password"
             autoComplete="off"
             spellCheck={false}
-            placeholder="eyJhbGciOi…"
+            placeholder="sb_secret_… または anon"
             value={settings.supabaseAnonKey}
             onChange={(e) => patch({ supabaseAnonKey: e.target.value.trim() })}
           />
         </label>
         <p className="settings-help">
-          Dashboard → Project Settings → API → anon public。URL:{" "}
+          Dashboard → Project Settings → API Keys の{" "}
+          <strong>secret</strong>（<code>sb_secret_…</code>
+          ）を推奨。この端末の localStorage
+          にだけ保存し、リポジトリには入れません。URL:{" "}
           <code>{SUPABASE_URL}</code>
-          。Anonymous Sign-Ins を有効にしてください。ビルド時の{" "}
-          <code>VITE_SUPABASE_ANON_KEY</code> があれば省略できます。
         </p>
         <p className="settings-help">
           同期:{" "}

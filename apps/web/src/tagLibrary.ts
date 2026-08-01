@@ -8,14 +8,28 @@ import { normalizeTag } from "./forceUncensored";
 import {
   pullRemoteLibrary,
   pushFullLibrary,
-  remoteDeleteDict,
-  remoteDeleteSet,
-  remoteUpsertDict,
-  remoteUpsertDictTags,
-  remoteUpsertSet,
   safeSync,
 } from "./tagLibrarySync";
 import type { OutputMode, TagScore } from "./types";
+
+let remotePushTimer: number | null = null;
+
+/** Debounced full-document push to Supabase Storage. */
+function scheduleRemotePush(): void {
+  if (typeof window === "undefined") {
+    void safeSync("push", () =>
+      exportLibrary().then((data) => pushFullLibrary(data)),
+    );
+    return;
+  }
+  if (remotePushTimer != null) window.clearTimeout(remotePushTimer);
+  remotePushTimer = window.setTimeout(() => {
+    remotePushTimer = null;
+    void safeSync("push", () =>
+      exportLibrary().then((data) => pushFullLibrary(data)),
+    );
+  }, 600);
+}
 
 const DB_NAME = "vision-tag-library";
 const DB_VERSION = 1;
@@ -239,11 +253,7 @@ export async function saveGeneratedSet(record: TagSetRecord): Promise<void> {
       await trimHistory(db);
     });
     logInfo("tag set saved", { id: record.id, tags: record.tags.length });
-    void safeSync("saveGeneratedSet", async () => {
-      await remoteUpsertSet(record, "history");
-      await remoteUpsertSet(record, "session");
-      await remoteUpsertDictTags(record.tags);
-    });
+    scheduleRemotePush();
   } catch (err) {
     logWarn("tag set save failed", describeError(err));
   }
@@ -258,10 +268,7 @@ export async function saveLastSession(record: TagSetRecord): Promise<void> {
       await txDone(tx);
       await upsertDictionaryTags(db, record.tags);
     });
-    void safeSync("saveLastSession", async () => {
-      await remoteUpsertSet(record, "session");
-      await remoteUpsertDictTags(record.tags);
-    });
+    scheduleRemotePush();
   } catch (err) {
     logWarn("last session save failed", describeError(err));
   }
@@ -336,7 +343,7 @@ export async function addFavorite(record: TagSetRecord): Promise<void> {
       tx.objectStore(STORE_FAVORITES).put(next);
       await txDone(tx);
     });
-    void safeSync("addFavorite", () => remoteUpsertSet(next, "favorite"));
+    scheduleRemotePush();
   } catch (err) {
     logWarn("favorite add failed", describeError(err));
     throw err;
@@ -350,7 +357,7 @@ export async function removeFavorite(id: string): Promise<void> {
       tx.objectStore(STORE_FAVORITES).delete(id);
       await txDone(tx);
     });
-    void safeSync("removeFavorite", () => remoteDeleteSet(id, "favorite"));
+    scheduleRemotePush();
   } catch (err) {
     logWarn("favorite remove failed", describeError(err));
     throw err;
@@ -364,7 +371,7 @@ export async function deleteHistory(id: string): Promise<void> {
       tx.objectStore(STORE_HISTORY).delete(id);
       await txDone(tx);
     });
-    void safeSync("deleteHistory", () => remoteDeleteSet(id, "history"));
+    scheduleRemotePush();
   } catch (err) {
     logWarn("history delete failed", describeError(err));
   }
@@ -425,7 +432,7 @@ export async function upsertDictEntry(
     await txDone(tx);
     return row;
   });
-  void safeSync("upsertDictEntry", () => remoteUpsertDict(next));
+  scheduleRemotePush();
   return next;
 }
 
@@ -437,7 +444,7 @@ export async function deleteDictEntry(tag: string): Promise<void> {
     tx.objectStore(STORE_DICT).delete(key);
     await txDone(tx);
   });
-  void safeSync("deleteDictEntry", () => remoteDeleteDict(key));
+  scheduleRemotePush();
 }
 
 /** Map of normalized tag → customJa for fast chip rendering. */
@@ -500,14 +507,7 @@ export async function importLibrary(
     await txDone(tx);
     await trimHistory(db);
   });
-  void safeSync("importLibrary", async () => {
-    await pushFullLibrary({
-      history: data.history ?? [],
-      favorites: data.favorites ?? [],
-      dictionary: data.dictionary ?? [],
-      lastSession: data.lastSession ?? null,
-    });
-  });
+  scheduleRemotePush();
 }
 
 /** Pull Supabase → IndexedDB (merge by updatedAt). */

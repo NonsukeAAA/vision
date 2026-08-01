@@ -13,21 +13,18 @@
 
 ## Supabase（タグライブラリ永続化）
 
-履歴・お気に入り・辞書・前回セッションは端末の IndexedDB にキャッシュし、[Supabase](https://supabase.com) プロジェクト `nmdlasnxevejggwmnjwm` へ同期します。
+履歴・お気に入り・辞書・前回セッションは端末の IndexedDB にキャッシュし、[Supabase Storage](https://supabase.com)（プロジェクト `nmdlasnxevejggwmnjwm` のプライベートバケット `vision-library`）へ JSON 同期します。SQL マイグレーションや Anonymous Auth は不要です。
 
-1. Dashboard で **Authentication → Providers → Anonymous Sign-Ins** を ON
-2. マイグレーション適用（アクセストークンが必要）:
+1. Dashboard → **Project Settings → API Keys** で **secret**（`sb_secret_…`）をコピー
+2. アプリ設定 → タグライブラリ に貼り付け（この端末だけに保存）
+3. 以降は生成・編集のたびに自動同期。手動は **送信 / 取得**
+
+任意で CLI 用 Personal Access Token（`sbp_…`）がある場合:
 
 ```bash
-export SUPABASE_ACCESS_TOKEN=sbp_…   # https://supabase.com/dashboard/account/tokens
-export SUPABASE_DB_PASSWORD=…        # 任意（db push で使う場合）
+export SUPABASE_ACCESS_TOKEN=sbp_…
 ./scripts/supabase-link.sh
 ```
-
-   または SQL Editor で [`supabase/migrations/20260801000000_vision_tag_library.sql`](./supabase/migrations/20260801000000_vision_tag_library.sql) を実行
-
-3. アプリ設定に **anon public** キーを貼る（またはビルド時 `VITE_SUPABASE_ANON_KEY`）
-4. 設定 → タグライブラリ → **送信 / 取得** で手動同期も可能
 
 ## GitHub Pages デプロイ
 

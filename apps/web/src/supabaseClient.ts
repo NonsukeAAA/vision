@@ -8,106 +8,127 @@ export const SUPABASE_URL =
   (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim() ||
   `https://${SUPABASE_PROJECT_REF}.supabase.co`;
 
-const ENV_ANON_KEY =
-  (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim() || "";
+const ENV_API_KEY =
+  (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim() ||
+  (import.meta.env.VITE_SUPABASE_API_KEY as string | undefined)?.trim() ||
+  "";
+
+/** Private Storage bucket used as the durable tag-library document store. */
+export const LIBRARY_BUCKET = "vision-library";
+export const LIBRARY_OBJECT = "library.json";
 
 let client: SupabaseClient | null = null;
-let activeAnonKey = "";
-let ensuring: Promise<string | null> | null = null;
+let activeKey = "";
 
-export function getSupabaseAnonKeyHint(): string {
-  return ENV_ANON_KEY ? "build" : "";
-}
-
-export function resolveAnonKey(settingsKey?: string): string {
-  const fromSettings = settingsKey?.trim() || "";
-  return fromSettings || ENV_ANON_KEY;
+export function resolveApiKey(settingsKey?: string): string {
+  return (settingsKey?.trim() || ENV_API_KEY).trim();
 }
 
 export function isSupabaseConfigured(settingsKey?: string): boolean {
-  return !!resolveAnonKey(settingsKey);
+  return !!resolveApiKey(settingsKey);
+}
+
+/** New `sb_secret_…` keys or legacy service_role JWTs (role claim). */
+export function isSecretApiKey(key: string): boolean {
+  const k = key.trim();
+  if (!k) return false;
+  if (k.startsWith("sb_secret_")) return true;
+  if (!k.startsWith("eyJ")) return false;
+  try {
+    const payload = JSON.parse(atob(k.split(".")[1] ?? "")) as {
+      role?: string;
+    };
+    return payload.role === "service_role";
+  } catch {
+    return false;
+  }
 }
 
 export function getSupabase(settingsKey?: string): SupabaseClient | null {
-  const key = resolveAnonKey(settingsKey);
+  const key = resolveApiKey(settingsKey);
   if (!key) {
     client = null;
-    activeAnonKey = "";
+    activeKey = "";
     return null;
   }
-  if (!client || activeAnonKey !== key) {
+  if (!client || activeKey !== key) {
     client = createClient(SUPABASE_URL, key, {
       auth: {
-        persistSession: true,
-        autoRefreshToken: true,
+        persistSession: !isSecretApiKey(key),
+        autoRefreshToken: !isSecretApiKey(key),
         detectSessionInUrl: false,
         storageKey: "vision.supabase.auth",
       },
     });
-    activeAnonKey = key;
+    activeKey = key;
   }
   return client;
 }
 
-/**
- * Prefer anonymous auth so RLS can scope rows by auth.uid().
- * Returns the user id, or null when Supabase is unavailable / anon disabled.
- */
-export async function ensureSupabaseUser(
-  settingsKey?: string,
-): Promise<string | null> {
-  const sb = getSupabase(settingsKey);
-  if (!sb) return null;
-  if (!ensuring) {
-    ensuring = (async () => {
-      try {
-        const { data: existing, error: getErr } = await sb.auth.getSession();
-        if (getErr) throw getErr;
-        if (existing.session?.user?.id) {
-          return existing.session.user.id;
-        }
-        const { data, error } = await sb.auth.signInAnonymously();
-        if (error) throw error;
-        const uid = data.user?.id ?? null;
-        if (uid) logInfo("supabase anon session", { uid: uid.slice(0, 8) });
-        return uid;
-      } catch (err) {
-        logWarn("supabase auth failed", describeError(err));
-        return null;
-      } finally {
-        ensuring = null;
-      }
-    })();
-  }
-  return ensuring;
-}
-
 export type SyncStatus =
   | { state: "off"; detail: string }
-  | { state: "ok"; detail: string; userId: string }
+  | { state: "ok"; detail: string }
   | { state: "error"; detail: string };
+
+export async function ensureLibraryBucket(
+  settingsKey?: string,
+): Promise<boolean> {
+  const sb = getSupabase(settingsKey);
+  if (!sb) return false;
+  const { data, error } = await sb.storage.getBucket(LIBRARY_BUCKET);
+  if (data && !error) return true;
+  const created = await sb.storage.createBucket(LIBRARY_BUCKET, {
+    public: false,
+    fileSizeLimit: 5 * 1024 * 1024,
+  });
+  if (created.error && !/already exists/i.test(created.error.message)) {
+    logWarn("supabase bucket create failed", describeError(created.error));
+    return false;
+  }
+  logInfo("supabase bucket ready", { bucket: LIBRARY_BUCKET });
+  return true;
+}
 
 export async function probeSupabaseSync(
   settingsKey?: string,
 ): Promise<SyncStatus> {
-  if (!isSupabaseConfigured(settingsKey)) {
+  const key = resolveApiKey(settingsKey);
+  if (!key) {
     return {
       state: "off",
       detail:
-        "Anon Key 未設定。設定に貼るか VITE_SUPABASE_ANON_KEY をビルドに渡してください。",
+        "API キー未設定。Dashboard の secret（sb_secret_…）または anon を貼ってください。",
     };
   }
-  const uid = await ensureSupabaseUser(settingsKey);
-  if (!uid) {
+  const sb = getSupabase(key);
+  if (!sb) {
+    return { state: "off", detail: "クライアント初期化に失敗しました" };
+  }
+  try {
+    const ok = await ensureLibraryBucket(key);
+    if (!ok) {
+      return {
+        state: "error",
+        detail: "Storage バケットを作成できませんでした（キー権限を確認）",
+      };
+    }
+    // Prove read access (missing object is fine).
+    const { error } = await sb.storage
+      .from(LIBRARY_BUCKET)
+      .download(LIBRARY_OBJECT);
+    if (error && !/not found|404|Object not found/i.test(error.message)) {
+      return { state: "error", detail: error.message };
+    }
+    const kind = isSecretApiKey(key) ? "secret" : "api";
+    return {
+      state: "ok",
+      detail: `Supabase Storage 同期中 · ${SUPABASE_PROJECT_REF} (${kind})`,
+    };
+  } catch (err) {
+    const msg = describeError(err).message;
     return {
       state: "error",
-      detail:
-        "Anonymous Sign-Ins を Dashboard で有効にするか、キーを確認してください。",
+      detail: typeof msg === "string" && msg ? msg : "接続に失敗しました",
     };
   }
-  return {
-    state: "ok",
-    detail: `同期中 · ${SUPABASE_PROJECT_REF}`,
-    userId: uid,
-  };
 }
